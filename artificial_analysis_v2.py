@@ -55,18 +55,12 @@ DEFAULT_MODEL_FIELDS = (
     "model_metadata.release_date",
 )
 DEFAULT_CATALOG_FIELDS = (
-    "slug", "name", "short_name", "release_date", "deprecated",
-    "deprecated_to", "creator", "is_reasoning", "is_open_weights",
-    "has_intelligence_index", "has_general_cost_data", "has_coding_index",
-    "has_coding_cost_data",
+    "slug", "short_name", "release_date",
 )
 DEFAULT_AGENT_FIELDS = (
-    "collected_at", "id", "entity_type", "agent_name", "provider",
-    "host_model_slug", "display_label", "variant_of", "index_score",
-    "benchmark_scores", "cost_per_task", "time_per_task_seconds", "steps",
-    "input_tokens_per_task", "cache_write_tokens_per_task",
-    "cache_tokens_per_task", "output_tokens_per_task", "total_tokens_per_task",
-    "cache_hit_rate",
+    "id", "display_label", "agent_name", "host_model_slug", "index_score",
+    "benchmark_scores", "cost_per_task", "time_per_task_seconds",
+    "output_tokens_per_task", "total_tokens_per_task",
 )
 
 FIELD_GROUPS = {

@@ -1,70 +1,148 @@
 # LLM-Pareto
 
-Small tools for comparing model capability, task cost, token use, and response-time trade-offs.
+Tools for comparing model capability, task cost, token use, response time, and coding-agent configurations.
 
-## Model data
+## Running the CLI with uv
 
-`artificial_analysis_v2.py` requires Python 3 and uses only the standard library. Run it with `uv run`:
+`artificial_analysis_v2.py` uses only the Python standard library. There are no packages to install.
 
-One model:
+Run it directly through `uv`:
+
+```bash
+uv run artificial_analysis_v2.py --help
+```
+
+Optionally select a Python version:
+
+```bash
+uv run --python 3.12 artificial_analysis_v2.py --help
+```
+
+The pre-v2 commands remain under `legacy/`:
+
+```bash
+uv run legacy/artificial_analysis_single_model.py gpt-5-6-sol
+uv run legacy/artificial_analysis_models.py gpt-5-6-sol,gpt-5-6-terra-low
+```
+
+## CLI modes
+
+The command has three mutually exclusive modes:
+
+1. model details from one or more positional slugs;
+2. the model catalogue through `--list-models`;
+3. Coding Agent Index configurations through `--coding-agents` or `--coding-agent`.
+
+Every successful response contains `schema_version`, `status`, and a UTC `collected_at` system timestamp. Each detailed model or coding-agent record uses the same timestamp as its containing response.
+
+### Model details
+
+One model returns `data.model`:
 
 ```bash
 uv run artificial_analysis_v2.py gpt-5-6-sol
 ```
 
-Multiple models:
+Multiple comma-separated or space-separated slugs return `data.models` in requested order:
 
 ```bash
 uv run artificial_analysis_v2.py \
-  gpt-5-6-terra-low,gpt-5-6-sol-high,gpt-5-6-sol-xhigh
+  gpt-5-6-terra-low,gpt-5-6-sol-high gpt-5-6-sol-xhigh
 ```
 
-Slugs can be comma-separated, space-separated, or both. A single slug returns `data.model`; multiple slugs return `data.models` in requested order. Duplicate slugs are removed.
+Duplicate slugs are removed. The request fails rather than returning a partial collection when a required record is unavailable for any requested model.
 
-### Output selection
+#### Default model output
 
-The default output is a compact comparison record close to the original cost-per-task format. It includes model identity, Intelligence and Coding Index scores, their cost breakdowns, token use, time per task, response speed, end-to-end time, time to first answer token, and release date.
+The default is a compact comparison record close to the original cost-per-task output:
 
-Select particular dotted fields:
+- `collected_at`, `slug`, `name`, `short_name`
+- `intelligence_index`
+- `cost_per_task` and `cost_per_task_breakdown`
+- input, answer-output and reasoning-output tokens per task
+- `time_per_task`
+- `output_speed_tokens_per_second`
+- `end_to_end_response_time`
+- `time_to_first_answer_token`
+- `coding_index`
+- `coding_cost_per_task` and `coding_cost_per_task_breakdown`
+- `coding_time_per_task`
+- `model_metadata.release_date`
 
-```bash
-uv run artificial_analysis_v2.py gpt-5-6-sol \
-  --fields slug,name,intelligence_index,cost_per_task,coding_index
-```
+The response metadata also includes requested and returned counts, source URLs, the evaluation reference model, the active evaluation field set, and the selected output fields.
 
-Named groups can be combined with field paths:
+#### Verbose model output
 
-```bash
-uv run artificial_analysis_v2.py gpt-5-6-sol \
-  --fields identity,cost,timing,evaluations
-```
-
-Available groups are `identity`, `summary`, `cost`, `tokens`, `timing`, `evaluations`, `coding`, `metadata`, `performance`, and `source`.
-
-Return the complete normalized and canonical records:
+`--verbose` returns every normalized field plus the canonical source records:
 
 ```bash
 uv run artificial_analysis_v2.py gpt-5-6-sol --verbose
 ```
 
-`--fields` and `--verbose` are mutually exclusive. Unknown field paths fail explicitly.
+This adds:
+
+- complete Intelligence and Coding Index cost totals and breakdowns;
+- evaluation scores and each evaluation's weighted cost contribution;
+- canonical token totals and answer/reasoning token splits;
+- output-speed and first-token percentile distributions;
+- first-answer and end-to-end timing components;
+- performance by prompt type and available time-series data;
+- nested benchmark details and result-status fields;
+- release, lineage, modality, context, licensing and pricing metadata;
+- `source_record.general` and `source_record.coding`.
 
 ### Model catalogue
 
-Return dated model candidates without requesting each model separately:
+The catalogue discovers dated candidates without requesting each model separately:
 
 ```bash
 uv run artificial_analysis_v2.py --list-models
+```
+
+#### Default catalogue output
+
+The default catalogue is deliberately minimal:
+
+- `slug`
+- `short_name`
+- `release_date`
+
+It excludes deprecated models by default and sorts newest releases first.
+
+Filter by data availability:
+
+```bash
 uv run artificial_analysis_v2.py --list-models --eligibility full
+```
+
+Eligibility modes are:
+
+- `all`: every canonical dated model allowed by the deprecation filter;
+- `active`: non-deprecated models, the default;
+- `general`: models with complete general cost data;
+- `coding`: models with complete Coding Index cost data;
+- `full`: models with complete general and Coding Index cost data.
+
+Filter by release date or include historical models:
+
+```bash
 uv run artificial_analysis_v2.py --list-models --since 2026-07-01
 uv run artificial_analysis_v2.py --list-models --include-deprecated
 ```
 
-Eligibility modes are `all`, `active`, `general`, `coding`, and `full`. Catalogue records include release date and flags for Intelligence Index, general cost, Coding Index, and coding cost availability. Typed canonical-record rules keep chart-specific representations out of the catalogue; conflicting equally complete canonical records fail rather than being selected silently.
+#### Verbose catalogue output
+
+```bash
+uv run artificial_analysis_v2.py --list-models --verbose
+```
+
+Verbose catalogue entries add full identity, creator, reasoning/open-weight/deprecation status, general and coding availability flags, and the canonical general and coding records.
+
+Typed canonical-record rules keep chart-specific representations out of the catalogue. Conflicting equally complete canonical records fail instead of being selected silently.
 
 ### Coding Agent Index
 
-Coding-agent results are represented as harness-model configurations with a stable configuration `id`, rather than as model slugs.
+Coding-agent results are harness-model configurations rather than ordinary model slugs. Their stable primary identity is the configuration `id`; harness and host model are separate dimensions.
 
 Return all configurations:
 
@@ -72,83 +150,104 @@ Return all configurations:
 uv run artificial_analysis_v2.py --coding-agents
 ```
 
-Select a configuration by stable ID or exact display label:
+`--list-coding-agents` is an alias for the same command.
+
+Select one or more configurations by stable ID or exact display label:
 
 ```bash
 uv run artificial_analysis_v2.py \
   --coding-agent 6eb6667a6c986c2afc40c779a1666e5a
 ```
 
-Each default record includes harness, provider, host model, composite score, component benchmark scores, cost, active wall time, steps, token usage and cache-hit rate. `--fields` and `--verbose` apply to coding-agent records as well. Verbose records additionally retain distributions, harness versions, display metadata, total cost and the canonical source record.
+Repeat `--coding-agent` to select several configurations.
 
-Every invocation includes:
+#### Default coding-agent output
 
-- `schema_version`
-- `collected_at`: current system time in UTC
-- `requested_count` and `returned_count`
-- `sources.general` and `sources.coding`
-- `evaluation_reference_model` and `evaluation_fields`
+- `id`, `display_label`, `agent_name`, `host_model_slug`
+- aggregate Coding Agent Index score
+- DeepSWE, Terminal-Bench v2 and SWE-Atlas-QnA component scores and token means
+- cost per task
+- active agent wall time per task
+- output and total tokens per task
 
-The same `collected_at` value is also placed on every model record for future row-oriented storage.
-
-### Evaluation schema
-
-`EVALUATION_REFERENCE_MODEL` near the top of the script defines the archived evaluation set. It defaults to `gpt-5-6-sol` and can be overridden with `--evaluation-reference-model MODEL_SLUG`. The selected reference model's non-null evaluations define a consistent schema; requested models return `null` where they have no reported result.
-
-Evaluation keys include GDPval-AA, normalized GDPval-AA, tau2, tau-bench Banking, Terminal-Bench Hard, Terminal-Bench v2.1, SciCode, Humanity's Last Exam, GPQA Diamond, CritPt, AA-Omniscience, AA Long Context Reasoning, IFBench, APEX Agents, ITBench SRE, MMMU-Pro, LiveCodeBench, and AIME 2025.
-
-The pre-v2 scripts are retained under `legacy/` for compatibility:
+#### Verbose coding-agent output
 
 ```bash
-uv run legacy/artificial_analysis_single_model.py gpt-5-6-sol
-uv run legacy/artificial_analysis_models.py gpt-5-6-sol,gpt-5-6-terra-low
+uv run artificial_analysis_v2.py --coding-agents --verbose
 ```
 
-### Identity and metadata
+Verbose records additionally contain provider and display metadata, variant relationship, component/evaluation counts, steps, input/cache/output token fields, cache-hit rate, total evaluation cost, cost/token percentiles, harness versions per benchmark, and the canonical source record.
 
-- slug, name, short name, creator and release date
-- reasoning, open-weights and deprecation status
-- replacement model, host-model count and performance-data source
-- knowledge cutoff, parameter count, active parameters and size class
-- context window and supported input/output modalities
-- licence, commercial-use status, open-source category and weights source
-- input, output, cache-hit, cache-write, blended-token and image prices
-- cache-hit discount
+## Selecting output fields
 
-### Intelligence Index
+`--fields` accepts comma-separated dotted paths, repeated flags, named groups, or a mixture:
 
-- Intelligence Index score and estimated-score status
-- individual evaluation scores and nested benchmark detail
-- cost per task with aggregate input, answer, reasoning, cache-write and cache-hit components
-- each evaluation's weighted contribution to cost per task
-- total index-run cost with token-category components
-- input tokens per task
-- total, answer and reasoning output tokens per task
-- canonical input/output/answer/reasoning token totals for the complete index run
-- time per task
+```bash
+uv run artificial_analysis_v2.py gpt-5-6-sol \
+  --fields slug,name,intelligence_index,cost_per_task,coding_index
+```
 
-### Response performance
+```bash
+uv run artificial_analysis_v2.py gpt-5-6-sol \
+  --fields identity,cost,timing,evaluations
+```
 
-- median output speed and its p05, p25, median, p75 and p95 distribution
-- time to first token and its percentile distribution
-- time to first answer token with input and reasoning components
-- end-to-end response time with input, reasoning and answer components
-- performance by prompt type, including the available medium, long, 100K-context and parallel measurements
-- available performance time-series data
+```bash
+uv run artificial_analysis_v2.py --coding-agents \
+  --fields id,display_label,index_score,percentiles
+```
 
-### Coding Index
+Named model groups are:
 
-- Coding Index score, weighted index and component subscores where available
-- cost per task with aggregate input, answer, reasoning, cache-write and cache-hit components
-- total Coding Index run cost with token-category components
-- time per task
-- total, answer and reasoning output tokens per task
+- `identity`
+- `summary`
+- `cost`
+- `tokens`
+- `timing`
+- `evaluations`
+- `coding`
+- `metadata`
+- `performance`
+- `source`
 
-### Source records
+Unknown paths fail explicitly. `--fields` and `--verbose` are mutually exclusive.
 
-`source_record.general` and `source_record.coding` retain the canonical records used to produce the normalized fields. This preserves newly introduced or currently unnormalized parameters in historical outputs.
+## Flags
 
-The command fails rather than returning a partial result when required records are unavailable for any requested model.
+| Flag | Use |
+|---|---|
+| positional `slugs` | Select one or more model slugs. |
+| `--list-models` | Return the dated model catalogue. |
+| `--eligibility all\|active\|general\|coding\|full` | Filter catalogue candidates by available data. |
+| `--include-deprecated` | Allow deprecated models in catalogue results. |
+| `--since YYYY-MM-DD` | Include catalogue entries released on or after the date. |
+| `--coding-agents`, `--list-coding-agents` | Return all Coding Agent Index configurations. |
+| `--coding-agent VALUE` | Select a configuration by ID or exact display label; repeatable. |
+| `--evaluation-reference-model SLUG` | Change the model whose non-null evaluations define the detailed-model evaluation schema. Defaults to `gpt-5-6-sol`. |
+| `--fields PATHS` | Return explicit dotted fields or named groups; repeatable. |
+| `--verbose` | Return all normalized and canonical fields. |
+| `--compact` | Emit JSON without indentation. |
+| `--timeout SECONDS` | Set the HTTP timeout; defaults to 30 seconds. |
+| `-h`, `--help` | Show CLI help. |
+
+## Planned SQLite archive
+
+Keep persistence separate from collection. A future `archive.py` should import functions from `artificial_analysis_v2.py`, run a small fixed set of collection jobs, and write append-only snapshots with the standard-library `sqlite3` module. It should not invoke the CLI as a subprocess.
+
+The collection jobs can remain ordinary Python configuration, for example:
+
+- active model catalogue;
+- verbose details for newly eligible or changed model slugs, batched in small groups;
+- verbose Coding Agent Index collection.
+
+The CLI's compact defaults are presentation choices. The archiver should always request verbose records so historical data is not discarded.
+
+A minimal database needs only two tables:
+
+- `collection_runs`: run ID, timestamp, entity type, schema version and job configuration;
+- `snapshots`: run ID, entity type, stable entity ID, release date, canonical JSON payload and payload hash.
+
+Use model slug as the model entity ID and coding-agent configuration ID as the coding-agent entity ID. Write one transaction per collection run, index snapshots by entity type/ID and collection time, and use a SHA-256 payload hash to detect unchanged records. More normalized tables can be added only when an actual query requires them.
 
 ## Efficiency explorer
 
