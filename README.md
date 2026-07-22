@@ -21,6 +21,66 @@ uv run artificial_analysis_v2.py \
 
 Slugs can be comma-separated, space-separated, or both. A single slug returns `data.model`; multiple slugs return `data.models` in requested order. Duplicate slugs are removed.
 
+### Output selection
+
+The default output is a compact comparison record close to the original cost-per-task format. It includes model identity, Intelligence and Coding Index scores, their cost breakdowns, token use, time per task, response speed, end-to-end time, time to first answer token, and release date.
+
+Select particular dotted fields:
+
+```bash
+uv run artificial_analysis_v2.py gpt-5-6-sol \
+  --fields slug,name,intelligence_index,cost_per_task,coding_index
+```
+
+Named groups can be combined with field paths:
+
+```bash
+uv run artificial_analysis_v2.py gpt-5-6-sol \
+  --fields identity,cost,timing,evaluations
+```
+
+Available groups are `identity`, `summary`, `cost`, `tokens`, `timing`, `evaluations`, `coding`, `metadata`, `performance`, and `source`.
+
+Return the complete normalized and canonical records:
+
+```bash
+uv run artificial_analysis_v2.py gpt-5-6-sol --verbose
+```
+
+`--fields` and `--verbose` are mutually exclusive. Unknown field paths fail explicitly.
+
+### Model catalogue
+
+Return dated model candidates without requesting each model separately:
+
+```bash
+uv run artificial_analysis_v2.py --list-models
+uv run artificial_analysis_v2.py --list-models --eligibility full
+uv run artificial_analysis_v2.py --list-models --since 2026-07-01
+uv run artificial_analysis_v2.py --list-models --include-deprecated
+```
+
+Eligibility modes are `all`, `active`, `general`, `coding`, and `full`. Catalogue records include release date and flags for Intelligence Index, general cost, Coding Index, and coding cost availability. Typed canonical-record rules keep chart-specific representations out of the catalogue; conflicting equally complete canonical records fail rather than being selected silently.
+
+### Coding Agent Index
+
+Coding-agent results are represented as harness-model configurations with a stable configuration `id`, rather than as model slugs.
+
+Return all configurations:
+
+```bash
+uv run artificial_analysis_v2.py --coding-agents
+```
+
+Select a configuration by stable ID or exact display label:
+
+```bash
+uv run artificial_analysis_v2.py \
+  --coding-agent 6eb6667a6c986c2afc40c779a1666e5a
+```
+
+Each default record includes harness, provider, host model, composite score, component benchmark scores, cost, active wall time, steps, token usage and cache-hit rate. `--fields` and `--verbose` apply to coding-agent records as well. Verbose records additionally retain distributions, harness versions, display metadata, total cost and the canonical source record.
+
 Every invocation includes:
 
 - `schema_version`

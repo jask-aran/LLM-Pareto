@@ -44,6 +44,74 @@ EVALUATION_FIELDS = {
     "livecodebench": "livecodebench",
     "aime25": "aime_2025",
 }
+
+DEFAULT_MODEL_FIELDS = (
+    "collected_at", "slug", "name", "short_name", "intelligence_index",
+    "cost_per_task", "cost_per_task_breakdown", "input_tokens_per_task",
+    "output_tokens_per_task", "reasoning_tokens_per_task", "time_per_task",
+    "output_speed_tokens_per_second", "end_to_end_response_time",
+    "time_to_first_answer_token", "coding_index", "coding_cost_per_task",
+    "coding_cost_per_task_breakdown", "coding_time_per_task",
+    "model_metadata.release_date",
+)
+DEFAULT_CATALOG_FIELDS = (
+    "slug", "name", "short_name", "release_date", "deprecated",
+    "deprecated_to", "creator", "is_reasoning", "is_open_weights",
+    "has_intelligence_index", "has_general_cost_data", "has_coding_index",
+    "has_coding_cost_data",
+)
+DEFAULT_AGENT_FIELDS = (
+    "collected_at", "id", "entity_type", "agent_name", "provider",
+    "host_model_slug", "display_label", "variant_of", "index_score",
+    "benchmark_scores", "cost_per_task", "time_per_task_seconds", "steps",
+    "input_tokens_per_task", "cache_write_tokens_per_task",
+    "cache_tokens_per_task", "output_tokens_per_task", "total_tokens_per_task",
+    "cache_hit_rate",
+)
+
+FIELD_GROUPS = {
+    "identity": ("slug", "name", "short_name", "model_metadata.release_date"),
+    "summary": DEFAULT_MODEL_FIELDS,
+    "cost": (
+        "cost_per_task", "cost_per_task_breakdown",
+        "intelligence_index_total_cost_breakdown",
+        "intelligence_evaluation_cost_contributions", "coding_cost_per_task",
+        "coding_cost_per_task_breakdown", "coding_index_total_cost_breakdown",
+    ),
+    "tokens": (
+        "input_tokens_per_task", "output_tokens_per_task",
+        "reasoning_tokens_per_task", "output_tokens_per_task_breakdown",
+        "canonical_intelligence_index_token_totals",
+        "coding_output_tokens_per_task",
+    ),
+    "timing": (
+        "time_per_task", "output_speed_tokens_per_second",
+        "output_speed_variance", "time_to_first_token",
+        "time_to_first_token_variance", "time_to_first_answer_token",
+        "time_to_first_answer_token_breakdown", "end_to_end_response_time",
+        "end_to_end_response_time_breakdown", "performance_by_prompt_type",
+        "performance_timeseries",
+    ),
+    "evaluations": (
+        "intelligence_index", "intelligence_evaluations", "benchmark_details",
+        "coding_index",
+    ),
+    "coding": (
+        "coding_index", "coding_cost_per_task", "coding_cost_per_task_breakdown",
+        "coding_time_per_task", "coding_output_tokens_per_task",
+        "coding_index_total_cost_breakdown", "benchmark_details.coding_sub_scores",
+        "benchmark_details.coding_weighted_index",
+    ),
+    "metadata": ("model_metadata", "result_status"),
+    "performance": (
+        "output_speed_tokens_per_second", "output_speed_variance",
+        "performance_by_prompt_type", "performance_timeseries",
+        "time_to_first_token", "time_to_first_token_variance",
+        "time_to_first_answer_token", "time_to_first_answer_token_breakdown",
+        "end_to_end_response_time", "end_to_end_response_time_breakdown",
+    ),
+    "source": ("source_record",),
+}
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
@@ -109,6 +177,83 @@ def _decode_flight_script(text: str) -> str | None:
     except json.JSONDecodeError:
         return None
     return value[1] if isinstance(value, list) and len(value) > 1 and isinstance(value[1], str) else None
+
+
+def extract_embedded_objects(page: str) -> list[dict[str, Any]]:
+    """Return JSON objects embedded in structured data and RSC payloads."""
+    parser = _ScriptParser()
+    parser.feed(page)
+    decoder = json.JSONDecoder()
+    objects: list[dict[str, Any]] = []
+    for attrs, script in parser.scripts:
+        if attrs.get("type") == "application/ld+json":
+            try:
+                decoded = json.loads(script)
+            except json.JSONDecodeError:
+                pass
+            else:
+                objects.extend(item for item in _walk(decoded) if isinstance(item, dict))
+        payload = _decode_flight_script(script)
+        if not payload:
+            continue
+        for match in re.finditer(r'\{\"id\":\"', payload):
+            try:
+                value, _ = decoder.raw_decode(payload[match.start():])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                objects.append(value)
+    return objects
+
+
+def _canonical_model_record(record: dict[str, Any]) -> bool:
+    required = {
+        "id", "slug", "name", "shortName", "releaseDate", "creator",
+        "intelligenceIndex", "intelligenceIndexCostPerTask",
+    }
+    return required.issubset(record)
+
+
+def _canonical_coding_record(record: dict[str, Any]) -> bool:
+    required = {
+        "id", "slug", "name", "headlineValue", "costPerTask",
+        "timePerTaskSeconds", "outputTokensPerTask",
+    }
+    return required.issubset(record)
+
+
+def _canonical_agent_record(record: dict[str, Any]) -> bool:
+    required = {
+        "id", "agentName", "provider", "hostModelSlug", "display",
+        "displayLabel", "evals", "indexScore", "mean", "percentiles", "versions",
+    }
+    return required.issubset(record)
+
+
+def _deduplicate_typed_records(
+    records: Iterable[dict[str, Any]],
+    predicate: Any,
+    key: str,
+) -> dict[str, dict[str, Any]]:
+    """Deduplicate one explicit record type; reject conflicting canonical copies."""
+    selected: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if not predicate(record) or not isinstance(record.get(key), str):
+            continue
+        identity = record[key]
+        previous = selected.get(identity)
+        if previous is None:
+            selected[identity] = record
+        elif previous != record:
+            previous_non_null = sum(value is not None for value in previous.values())
+            current_non_null = sum(value is not None for value in record.values())
+            if current_non_null > previous_non_null:
+                selected[identity] = record
+            elif current_non_null == previous_non_null:
+                raise ExtractionError(
+                    f"Conflicting canonical representations for {key}={identity!r}"
+                )
+    return selected
 
 
 def _objects_around_marker(text: str, marker: str) -> Iterable[dict[str, Any]]:
@@ -182,6 +327,42 @@ def _required(value: Any, field: str) -> Any:
     if value is None:
         raise ExtractionError(f"Required field {field!r} was not present in the page data")
     return value
+
+
+def parse_field_selection(values: list[str] | None) -> list[str] | None:
+    if not values:
+        return None
+    requested: list[str] = []
+    for value in values:
+        requested.extend(item.strip() for item in value.split(",") if item.strip())
+    expanded: list[str] = []
+    for item in requested:
+        expanded.extend(FIELD_GROUPS.get(item, (item,)))
+    return list(dict.fromkeys(expanded))
+
+
+def _lookup_path(record: dict[str, Any], path: str) -> Any:
+    current: Any = record
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            raise ExtractionError(f"Unknown output field {path!r}")
+        current = current[part]
+    return current
+
+
+def _assign_path(result: dict[str, Any], path: str, value: Any) -> None:
+    parts = path.split(".")
+    current = result
+    for part in parts[:-1]:
+        current = current.setdefault(part, {})
+    current[parts[-1]] = value
+
+
+def project_record(record: dict[str, Any], fields: Iterable[str]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for path in fields:
+        _assign_path(result, path, _lookup_path(record, path))
+    return result
 
 
 def _canonical_model(records: Iterable[dict[str, Any]], slug: str) -> dict[str, Any] | None:
@@ -464,10 +645,186 @@ def parse_slugs(values: list[str]) -> list[str]:
     return list(dict.fromkeys(slugs))
 
 
+def build_model_catalog(
+    timeout: float = 30.0,
+    eligibility: str = "active",
+    include_deprecated: bool = False,
+    since: str | None = None,
+    fields: list[str] | None = None,
+    verbose: bool = False,
+) -> dict[str, Any]:
+    collected_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    general_url = f"{BASE}/models/{EVALUATION_REFERENCE_MODEL}"
+    coding_url = (
+        f"{BASE}/models/capabilities/coding"
+        f"?cost-per-task=index-vs-cost-per-task&models={EVALUATION_REFERENCE_MODEL}"
+    )
+    general = _deduplicate_typed_records(
+        extract_embedded_objects(fetch(general_url, timeout)),
+        _canonical_model_record,
+        "slug",
+    )
+    coding = _deduplicate_typed_records(
+        extract_embedded_objects(fetch(coding_url, timeout)),
+        _canonical_coding_record,
+        "slug",
+    )
+    catalogue: list[dict[str, Any]] = []
+    for slug, record in general.items():
+        coding_record = coding.get(slug) or {}
+        general_cost = (((record.get("intelligenceIndexCostPerTask") or {}).get("cost") or {}).get("total"))
+        coding_cost = ((coding_record.get("costPerTask") or {}).get("total"))
+        item = {
+            "slug": slug,
+            "name": record.get("name"),
+            "short_name": record.get("shortName"),
+            "release_date": record.get("releaseDate"),
+            "deprecated": bool(record.get("deprecated")),
+            "deprecated_to": record.get("deprecatedTo"),
+            "creator": record.get("creator"),
+            "is_reasoning": record.get("isReasoning"),
+            "is_open_weights": record.get("isOpenWeights"),
+            "has_intelligence_index": record.get("intelligenceIndex") is not None,
+            "has_general_cost_data": general_cost is not None,
+            "has_coding_index": (
+                record.get("codingIndex") is not None or coding_record.get("headlineValue") is not None
+            ),
+            "has_coding_cost_data": coding_cost is not None,
+            "source_record": {"general": record, "coding": coding_record or None},
+        }
+        if not include_deprecated and item["deprecated"]:
+            continue
+        if since and (not item["release_date"] or item["release_date"] < since):
+            continue
+        eligible = {
+            "all": True,
+            "active": not item["deprecated"] or include_deprecated,
+            "general": item["has_general_cost_data"],
+            "coding": item["has_coding_cost_data"],
+            "full": item["has_general_cost_data"] and item["has_coding_cost_data"],
+        }.get(eligibility)
+        if eligible is None:
+            raise ExtractionError(f"Unknown eligibility mode {eligibility!r}")
+        if eligible:
+            catalogue.append(item)
+    catalogue.sort(key=lambda item: (item.get("release_date") or "", item["slug"]), reverse=True)
+    selected_fields = fields or list(DEFAULT_CATALOG_FIELDS)
+    if not verbose:
+        catalogue = [project_record(item, selected_fields) for item in catalogue]
+    return {
+        "schema_version": 2,
+        "status": "success",
+        "entity_type": "model_catalogue",
+        "collected_at": collected_at,
+        "data": {
+            "models": catalogue,
+            "count": len(catalogue),
+            "eligibility": eligibility,
+            "include_deprecated": include_deprecated,
+            "since": since,
+            "output_fields": "all" if verbose else selected_fields,
+            "sources": {"general": general_url, "coding": coding_url},
+        },
+    }
+
+
+def _normalize_agent(record: dict[str, Any], collected_at: str) -> dict[str, Any]:
+    mean = record.get("mean") or {}
+    benchmark_scores = {
+        evaluation.get("datasetIndexName") or evaluation.get("evaluationDatasetSlug"): {
+            "dataset_slug": evaluation.get("evaluationDatasetSlug"),
+            "reference_dataset": evaluation.get("refDatasetName"),
+            "weight": evaluation.get("weight"),
+            "score": (evaluation.get("mean") or {}).get("reward"),
+            "input_tokens_per_task": (evaluation.get("mean") or {}).get("inputTokens"),
+            "cache_write_tokens_per_task": (evaluation.get("mean") or {}).get("cacheWriteTokens"),
+            "output_tokens_per_task": (evaluation.get("mean") or {}).get("outputTokens"),
+        }
+        for evaluation in record.get("evals") or []
+    }
+    return {
+        "collected_at": collected_at,
+        "id": record["id"],
+        "entity_type": "coding_agent_configuration",
+        "agent_name": record.get("agentName"),
+        "provider": record.get("provider"),
+        "host_model_slug": record.get("hostModelSlug"),
+        "display": record.get("display"),
+        "display_label": record.get("displayLabel"),
+        "variant_of": record.get("variantOf"),
+        "index_component_count": record.get("indexComponentCount"),
+        "evaluation_count": record.get("evalCount"),
+        "index_score": record.get("indexScore"),
+        "benchmark_scores": benchmark_scores,
+        "cost_per_task": mean.get("costUsd"),
+        "time_per_task_seconds": mean.get("agentWallTimeSec"),
+        "steps": mean.get("steps"),
+        "input_tokens_per_task": mean.get("inputTokens"),
+        "cache_write_tokens_per_task": mean.get("cacheWriteTokens"),
+        "cache_tokens_per_task": mean.get("cacheTokens"),
+        "output_tokens_per_task": mean.get("outputTokens"),
+        "total_tokens_per_task": mean.get("totalTokens"),
+        "cache_hit_rate": mean.get("cacheHitRate"),
+        "total_cost": (record.get("sums") or {}).get("costUsd"),
+        "percentiles": record.get("percentiles"),
+        "versions": record.get("versions"),
+        "source_record": record,
+    }
+
+
+def extract_coding_agents(
+    selectors: list[str] | None = None,
+    timeout: float = 30.0,
+    fields: list[str] | None = None,
+    verbose: bool = False,
+) -> dict[str, Any]:
+    collected_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    url = f"{BASE}/agents/coding-agents"
+    records = _deduplicate_typed_records(
+        extract_embedded_objects(fetch(url, timeout)),
+        _canonical_agent_record,
+        "id",
+    )
+    selected = list(records.values())
+    if selectors:
+        chosen: list[dict[str, Any]] = []
+        for selector in selectors:
+            matches = [
+                record for record in selected
+                if selector in {record["id"], record.get("displayLabel")}
+            ]
+            if len(matches) != 1:
+                raise ExtractionError(
+                    f"Coding-agent selector {selector!r} matched {len(matches)} records; "
+                    "use the stable configuration id or exact display label"
+                )
+            chosen.append(matches[0])
+        selected = chosen
+    selected.sort(key=lambda record: record.get("indexScore") or -1, reverse=True)
+    agents = [_normalize_agent(record, collected_at) for record in selected]
+    selected_fields = fields or list(DEFAULT_AGENT_FIELDS)
+    if not verbose:
+        agents = [project_record(agent, selected_fields) for agent in agents]
+    return {
+        "schema_version": 2,
+        "status": "success",
+        "entity_type": "coding_agent_configuration_collection",
+        "collected_at": collected_at,
+        "data": {
+            "coding_agents": agents,
+            "count": len(agents),
+            "output_fields": "all" if verbose else selected_fields,
+            "source": url,
+        },
+    }
+
+
 def extract_models(
     slugs: list[str],
     timeout: float = 30.0,
     evaluation_reference_model: str = EVALUATION_REFERENCE_MODEL,
+    fields: list[str] | None = None,
+    verbose: bool = False,
 ) -> dict[str, Any]:
     if not slugs:
         raise ExtractionError("At least one model slug is required")
@@ -487,7 +844,7 @@ def extract_models(
     )
     general_page = fetch(general_url, timeout)
     coding_page = fetch(coding_url, timeout)
-    fields = evaluation_schema(general_page, evaluation_reference_model)
+    evaluation_fields = evaluation_schema(general_page, evaluation_reference_model)
 
     models: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
@@ -498,7 +855,7 @@ def extract_models(
                 timeout,
                 general_page=general_page,
                 coding_page=coding_page,
-                evaluation_fields=fields,
+                evaluation_fields=evaluation_fields,
                 evaluation_reference_model=evaluation_reference_model,
                 collected_at=collected_at,
             )
@@ -511,12 +868,17 @@ def extract_models(
             "Incomplete model records: " + json.dumps(errors, ensure_ascii=False)
         )
 
+    selected_fields = fields or list(DEFAULT_MODEL_FIELDS)
+    if not verbose:
+        models = [project_record(model, selected_fields) for model in models]
+
     common = {
         "requested_count": len(slugs),
         "returned_count": len(models),
         "evaluation_reference_model": evaluation_reference_model,
-        "evaluation_fields": list(fields.values()),
+        "evaluation_fields": list(evaluation_fields.values()),
         "sources": {"general": general_url, "coding": coding_url},
+        "output_fields": "all" if verbose else selected_fields,
     }
     data: dict[str, Any]
     if len(models) == 1:
@@ -533,21 +895,73 @@ def extract_models(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("slugs", nargs="+", help="Model slugs separated by spaces and/or commas")
+    parser.add_argument("slugs", nargs="*", help="Model slugs separated by spaces and/or commas")
     parser.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout in seconds")
     parser.add_argument(
         "--evaluation-reference-model",
         default=EVALUATION_REFERENCE_MODEL,
         help="Model whose reported evaluations define the benchmark field set",
     )
+    parser.add_argument("--list-models", action="store_true", help="Return the model catalogue")
+    parser.add_argument(
+        "--eligibility",
+        choices=("all", "active", "general", "coding", "full"),
+        default="active",
+        help="Catalogue eligibility filter",
+    )
+    parser.add_argument("--include-deprecated", action="store_true")
+    parser.add_argument("--since", help="Catalogue release-date lower bound (YYYY-MM-DD)")
+    parser.add_argument(
+        "--coding-agents", "--list-coding-agents",
+        dest="coding_agents", action="store_true",
+        help="Return Coding Agent Index configurations",
+    )
+    parser.add_argument(
+        "--coding-agent",
+        action="append",
+        default=[],
+        help="Select a coding-agent configuration by id or exact display label; repeatable",
+    )
+    parser.add_argument(
+        "--fields",
+        action="append",
+        help="Comma-separated dotted fields or groups: summary, cost, tokens, timing, "
+             "evaluations, coding, metadata, performance, source",
+    )
+    parser.add_argument("--verbose", action="store_true", help="Return every available field")
     parser.add_argument("--compact", action="store_true", help="Emit compact JSON")
     args = parser.parse_args()
+    if args.verbose and args.fields:
+        parser.error("--verbose and --fields are mutually exclusive")
+    modes = int(bool(args.slugs)) + int(args.list_models) + int(bool(args.coding_agents or args.coding_agent))
+    if modes != 1:
+        parser.error("choose exactly one mode: model slugs, --list-models, or --coding-agents")
+    selected_fields = parse_field_selection(args.fields)
     try:
-        result = extract_models(
-            parse_slugs(args.slugs),
-            args.timeout,
-            args.evaluation_reference_model,
-        )
+        if args.list_models:
+            result = build_model_catalog(
+                args.timeout,
+                args.eligibility,
+                args.include_deprecated,
+                args.since,
+                selected_fields,
+                args.verbose,
+            )
+        elif args.coding_agents or args.coding_agent:
+            result = extract_coding_agents(
+                args.coding_agent or None,
+                args.timeout,
+                selected_fields,
+                args.verbose,
+            )
+        else:
+            result = extract_models(
+                parse_slugs(args.slugs),
+                args.timeout,
+                args.evaluation_reference_model,
+                selected_fields,
+                args.verbose,
+            )
     except ExtractionError as exc:
         print(json.dumps({"status": "error", "error": str(exc)}), file=sys.stderr)
         return 1
