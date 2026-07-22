@@ -237,92 +237,79 @@ timestamps, counts, sources and collection metadata also remain present.
 
 ## Local archive
 
-`archive.py` keeps verbose historical records in two forms:
-
-- one readable JSON file for each collection job;
-- an indexed SQLite database for queries.
-
-It imports the collector directly and uses only Python's standard library. The
-JSON records are the recovery source of truth. The database can always be rebuilt
-from them. Generated data and reset backups are excluded by `.gitignore`.
-
-By default, collection archives the active model catalogue and every coding-agent
-configuration:
+`archive.py` creates a coherent frontier snapshot using verbose records. A bare
+collection gets the complete catalogue, deep details for every active model with
+both general and coding data, and every coding-agent configuration. Models are
+batched to keep request URLs bounded; deprecated catalogue entries remain locally
+queryable but are not deeply collected unless requested.
 
 ```bash
 uv run archive.py collect
 ```
 
-Add detailed model records with comma-separated or repeated `--models` values:
+`--since` limits deep model records by source `release_date` without truncating
+the saved catalogue. `--models` overrides automatic deep-model selection.
 
 ```bash
-uv run archive.py collect \
-  --models gpt-5-6-sol,gpt-5-6-terra-low \
-  --models gpt-5-6-sol-high
+uv run archive.py collect --since 2026-01-01
+uv run archive.py collect --models gpt-5-6-sol,gpt-5-6-terra-low
 ```
 
-Run only selected jobs:
+Optional exclusions support narrower collections:
 
 ```bash
+uv run archive.py collect --no-model-details
 uv run archive.py collect --no-coding-agents
 uv run archive.py collect --no-catalogue --models gpt-5-6-sol
 ```
 
-Catalogue filters and model evaluation options match the main collector:
+Each job is stored as an individual JSON record and indexed in SQLite. A final
+manifest records its catalogue, model batches, coding-agent run, selected and
+skipped slugs, filters, timing and completion status. Queries use only the latest
+completed manifest and never access the network.
 
 ```bash
-uv run archive.py collect --eligibility full --since 2026-07-01
-uv run archive.py collect --include-deprecated
-uv run archive.py collect --models gpt-5-6-sol \
-  --evaluation-reference-model gpt-5-6-sol
+uv run archive.py query gpt-5-6-sol
+uv run archive.py query --list-models
+uv run archive.py query --list-models --eligibility full --since 2026-01-01
+uv run archive.py query --coding-agents
+uv run archive.py query --coding-agent CONFIGURATION_ID
 ```
 
-All archive jobs request verbose records regardless of the main CLI's default
-projection. The default location is `data/`; change it with the top-level option
-`--data-dir PATH`, placed before the subcommand:
+Cached queries retain the main CLI's default fields, mandatory identities,
+`--fields`, `--verbose`, `--compact`, model slug parsing and coding-agent
+selectors. Query an earlier completed snapshot with `--at UTC_TIMESTAMP`:
 
 ```bash
-uv run archive.py --data-dir /path/to/llm-pareto-data collect
+uv run archive.py query gpt-5-6-sol --fields intelligence_index,cost_per_task
+uv run archive.py query --list-models --verbose
+uv run archive.py query --coding-agents --at 2026-07-22T12:00:00Z
 ```
 
-### Integrity and recovery
+The default data directory is `data/`. Put `--data-dir PATH` before the subcommand
+to use persistent storage elsewhere. Generated data and reset backups are ignored
+by Git.
 
-A collection is written and flushed to JSON before its SQLite transaction. If a
-database write fails, the JSON remains available for recovery. Validate JSON
-hashes, SQLite integrity, and exact run/snapshot parity with:
+### Recovery
+
+JSON is written and flushed before its SQLite transaction, making JSON the
+recovery source of truth. `verify` checks JSON hashes, SQLite integrity and exact
+run/snapshot parity. `rebuild` atomically reconstructs SQLite only after every JSON
+record validates.
 
 ```bash
 uv run archive.py verify
-```
-
-On a cold start, `collect` creates the directories, schema, and database. To
-create a missing database or reconstruct a damaged one from all JSON records:
-
-```bash
 uv run archive.py rebuild
 uv run archive.py rebuild --replace
 ```
 
-`rebuild` constructs a temporary database and only moves it into place after all
-records validate and import successfully. It refuses to overwrite an existing
-database unless `--replace` is given. A malformed JSON file, changed payload
-hash, duplicate run, or unknown archive format stops the rebuild without replacing
-the current database.
-
-Reset is deliberately explicit and recoverable:
+Cold collection creates the directories and schema automatically. Reset requires
+confirmation and moves the data directory to a timestamped backup instead of
+deleting it:
 
 ```bash
 uv run archive.py reset --yes
 ```
-
-It moves `data/` to a timestamped sibling such as `data.reset-20260722T120000Z/`
-and creates a new empty `data/` directory. It does not permanently delete the old
-database or JSON records.
-
-The SQLite schema remains small: `collection_runs` records each job and its JSON
-path, while `snapshots` stores one canonical payload per entity in that run.
-Model slugs and coding-agent configuration IDs are the stable entity identifiers;
-SHA-256 hashes make unchanged payloads and accidental modifications detectable.
 
 ## Efficiency explorer
 

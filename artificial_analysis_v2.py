@@ -838,10 +838,12 @@ def extract_models(
             raise ExtractionError(f"Invalid model slug: {slug!r}")
 
     collected_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    general_page_slugs = list(dict.fromkeys((*slugs, evaluation_reference_model)))
+    encoded_general_models = urllib.parse.quote(",".join(general_page_slugs), safe="")
     encoded_models = urllib.parse.quote(",".join(slugs), safe="")
     general_url = (
         f"{BASE}/models/{slugs[0]}"
-        f"?cost=intelligence-vs-cost-per-task&models={encoded_models}"
+        f"?cost=intelligence-vs-cost-per-task&models={encoded_general_models}"
     )
     coding_url = (
         f"{BASE}/models/capabilities/coding"

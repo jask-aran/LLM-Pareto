@@ -13,6 +13,7 @@ import sys
 import tempfile
 import uuid
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -24,6 +25,8 @@ ARCHIVE_VERSION = 1
 DEFAULT_DATA_DIR = Path("data")
 DATABASE_NAME = "archive.sqlite3"
 JSON_DIRECTORY = "json"
+MAX_MODELS_PER_BATCH = 40
+MAX_ENCODED_SLUGS_LENGTH = 6500
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS collection_runs (
@@ -54,6 +57,12 @@ CREATE INDEX IF NOT EXISTS snapshots_payload_hash
 
 class ArchiveError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class PersistedRun:
+    path: Path
+    run_id: str
 
 
 def utc_now() -> str:
@@ -144,6 +153,9 @@ def entities(record: dict[str, Any]) -> Iterable[tuple[str, str, str | None, dic
     elif job_type == "coding_agents":
         for agent in data.get("coding_agents") or []:
             yield "coding_agent_configuration", agent["id"], None, agent
+    elif job_type == "frontier_manifest":
+        manifest = data["manifest"]
+        yield "frontier_collection", manifest["collection_id"], None, manifest
     else:
         raise ArchiveError(f"Unknown archive job type {job_type!r}")
 
@@ -183,7 +195,7 @@ def insert_record(connection: sqlite3.Connection, record: dict[str, Any], relati
         )
 
 
-def persist(data_dir: Path, job: dict[str, Any], response: dict[str, Any]) -> Path:
+def persist(data_dir: Path, job: dict[str, Any], response: dict[str, Any]) -> PersistedRun:
     database, json_dir = paths(data_dir)
     record = make_archive_record(job, response)
     relative = json_relative_path(record)
@@ -196,38 +208,163 @@ def persist(data_dir: Path, job: dict[str, Any], response: dict[str, Any]) -> Pa
     except Exception:
         # Deliberately retain the durable JSON record for a later rebuild.
         raise
-    return destination
+    return PersistedRun(destination, record["run_id"])
 
 
-def collect(args: argparse.Namespace) -> list[Path]:
+def batch_slugs(slugs: list[str]) -> list[list[str]]:
+    """Bound model-set URLs by both model count and encoded query length."""
+    batches: list[list[str]] = []
+    current: list[str] = []
+    current_length = 0
+    for slug in slugs:
+        encoded_length = len(slug) + (3 if current else 0)  # encoded comma is %2C
+        if current and (
+            len(current) >= MAX_MODELS_PER_BATCH
+            or current_length + encoded_length > MAX_ENCODED_SLUGS_LENGTH
+        ):
+            batches.append(current)
+            current = []
+            current_length = 0
+            encoded_length = len(slug)
+        current.append(slug)
+        current_length += encoded_length
+    if current:
+        batches.append(current)
+    return batches
+
+
+def manifest_response(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "status": "success",
+        "entity_type": "frontier_collection_manifest",
+        "collected_at": manifest["finished_at"],
+        "data": {"manifest": manifest},
+    }
+
+
+def collect(args: argparse.Namespace) -> tuple[list[Path], dict[str, Any]]:
+    collection_id = uuid.uuid4().hex
+    started_at = utc_now()
     written: list[Path] = []
-    if not args.no_catalogue:
-        job = {
-            "type": "model_catalogue", "eligibility": args.eligibility,
-            "include_deprecated": args.include_deprecated, "since": args.since,
-        }
-        response = scraper.build_model_catalog(
-            timeout=args.timeout, eligibility=args.eligibility,
-            include_deprecated=args.include_deprecated, since=args.since, verbose=True,
-        )
-        written.append(persist(args.data_dir, job, response))
-    if args.models:
-        slugs = scraper.parse_slugs(args.models)
-        job = {"type": "models", "slugs": slugs, "evaluation_reference_model": args.evaluation_reference_model}
-        response = scraper.extract_models(
-            slugs, timeout=args.timeout,
-            evaluation_reference_model=args.evaluation_reference_model, verbose=True,
-        )
-        written.append(persist(args.data_dir, job, response))
-    if not args.no_coding_agents:
-        job = {"type": "coding_agents", "selectors": args.coding_agent or []}
-        response = scraper.extract_coding_agents(
-            args.coding_agent or None, timeout=args.timeout, verbose=True,
-        )
-        written.append(persist(args.data_dir, job, response))
-    if not written:
-        raise ArchiveError("No collection jobs selected")
-    return written
+    catalogue_run_id: str | None = None
+    model_run_ids: list[str] = []
+    coding_agents_run_id: str | None = None
+    discovered_slugs: list[str] = []
+    selected_slugs: list[str] = []
+    skipped: list[dict[str, str]] = []
+    failure: str | None = None
+
+    try:
+        if not args.no_catalogue:
+            job = {
+                "type": "model_catalogue", "eligibility": "all",
+                "include_deprecated": True, "since": None,
+                "collection_id": collection_id,
+            }
+            # Archive the complete catalogue. User filters only limit deep records.
+            response = scraper.build_model_catalog(
+                timeout=args.timeout, eligibility="all",
+                include_deprecated=True, since=None, verbose=True,
+            )
+            persisted = persist(args.data_dir, job, response)
+            written.append(persisted.path)
+            catalogue_run_id = persisted.run_id
+            catalogue = response["data"]["models"]
+            discovered_slugs = [model["slug"] for model in catalogue]
+
+            if args.models:
+                selected_slugs = scraper.parse_slugs(args.models)
+            elif not args.no_model_details:
+                for model in catalogue:
+                    release_date = model.get("release_date")
+                    eligibility_matches = {
+                        "all": True,
+                        "active": not model.get("deprecated"),
+                        "general": bool(model.get("has_general_cost_data")),
+                        "coding": bool(model.get("has_coding_cost_data")),
+                        "full": bool(
+                            model.get("has_general_cost_data")
+                            and model.get("has_coding_cost_data")
+                        ),
+                    }[args.eligibility]
+                    if model.get("deprecated") and not args.include_deprecated:
+                        skipped.append({"slug": model["slug"], "reason": "deprecated"})
+                    elif not eligibility_matches:
+                        skipped.append({"slug": model["slug"], "reason": "ineligible"})
+                    elif args.since and (not release_date or release_date < args.since):
+                        skipped.append({"slug": model["slug"], "reason": "before_since"})
+                    elif not (
+                        model.get("has_general_cost_data")
+                        and model.get("has_coding_cost_data")
+                    ):
+                        skipped.append({"slug": model["slug"], "reason": "incomplete_detail_data"})
+                    else:
+                        selected_slugs.append(model["slug"])
+        elif args.models:
+            selected_slugs = scraper.parse_slugs(args.models)
+        elif not args.no_model_details:
+            raise ArchiveError("Automatic model discovery requires the catalogue")
+
+        for batch_number, slugs in enumerate(batch_slugs(selected_slugs), start=1):
+            job = {
+                "type": "models", "slugs": slugs,
+                "evaluation_reference_model": args.evaluation_reference_model,
+                "collection_id": collection_id, "batch": batch_number,
+            }
+            response = scraper.extract_models(
+                slugs, timeout=args.timeout,
+                evaluation_reference_model=args.evaluation_reference_model, verbose=True,
+            )
+            persisted = persist(args.data_dir, job, response)
+            written.append(persisted.path)
+            model_run_ids.append(persisted.run_id)
+
+        if not args.no_coding_agents:
+            job = {
+                "type": "coding_agents", "selectors": args.coding_agent or [],
+                "collection_id": collection_id,
+            }
+            response = scraper.extract_coding_agents(
+                args.coding_agent or None, timeout=args.timeout, verbose=True,
+            )
+            persisted = persist(args.data_dir, job, response)
+            written.append(persisted.path)
+            coding_agents_run_id = persisted.run_id
+    except (ArchiveError, scraper.ExtractionError) as exc:
+        failure = str(exc)
+
+    manifest = {
+        "collection_id": collection_id,
+        "started_at": started_at,
+        "finished_at": utc_now(),
+        "completed": failure is None,
+        "error": failure,
+        "filters": {
+            "eligibility": args.eligibility,
+            "include_deprecated": args.include_deprecated,
+            "since": args.since,
+        },
+        "runs": {
+            "catalogue": catalogue_run_id,
+            "models": model_run_ids,
+            "coding_agents": coding_agents_run_id,
+        },
+        "discovered_model_count": len(discovered_slugs),
+        "selected_model_count": len(selected_slugs),
+        "selected_model_slugs": selected_slugs,
+        "skipped_models": skipped,
+        "model_batch_count": len(model_run_ids),
+    }
+    manifest_run = persist(
+        args.data_dir,
+        {"type": "frontier_manifest", "collection_id": collection_id},
+        manifest_response(manifest),
+    )
+    written.append(manifest_run.path)
+    if failure:
+        raise ArchiveError(f"Frontier collection {collection_id} was incomplete: {failure}")
+    return written, manifest
 
 
 def load_json_records(json_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
@@ -304,6 +441,145 @@ def verify(data_dir: Path) -> tuple[int, int]:
     return db_runs, db_snapshots
 
 
+def latest_manifest(connection: sqlite3.Connection, at: str | None = None) -> dict[str, Any]:
+    rows = connection.execute(
+        "SELECT payload_json FROM snapshots "
+        "WHERE entity_type = 'frontier_collection' "
+        "AND (? IS NULL OR collected_at <= ?) ORDER BY collected_at DESC, rowid DESC",
+        (at, at),
+    )
+    for (payload_json,) in rows:
+        manifest = json.loads(payload_json)
+        if manifest.get("completed"):
+            return manifest
+    qualifier = f" at or before {at}" if at else ""
+    raise ArchiveError(f"No completed frontier collection exists{qualifier}")
+
+
+def snapshots_for_runs(
+    connection: sqlite3.Connection,
+    run_ids: Iterable[str],
+    entity_type: str,
+) -> list[dict[str, Any]]:
+    run_ids = list(run_ids)
+    if not run_ids:
+        return []
+    placeholders = ",".join("?" for _ in run_ids)
+    rows = connection.execute(
+        f"SELECT payload_json FROM snapshots WHERE entity_type = ? "
+        f"AND run_id IN ({placeholders}) ORDER BY collected_at, entity_id",
+        (entity_type, *run_ids),
+    )
+    return [json.loads(row[0]) for row in rows]
+
+
+def query_cache(args: argparse.Namespace) -> dict[str, Any]:
+    database, _ = paths(args.data_dir)
+    if not database.exists():
+        raise ArchiveError(f"Database {database} does not exist; run collect or rebuild first")
+    fields = scraper.parse_field_selection(args.fields)
+    with closing(connect_database(database)) as connection:
+        manifest = latest_manifest(connection, args.at)
+        runs = manifest["runs"]
+        if args.list_models:
+            records = snapshots_for_runs(
+                connection, [runs["catalogue"]] if runs.get("catalogue") else [],
+                "model_catalogue_entry",
+            )
+            filtered: list[dict[str, Any]] = []
+            for record in records:
+                if not args.include_deprecated and record.get("deprecated"):
+                    continue
+                if args.since and (
+                    not record.get("release_date") or record["release_date"] < args.since
+                ):
+                    continue
+                eligible = {
+                    "all": True,
+                    "active": not record.get("deprecated") or args.include_deprecated,
+                    "general": bool(record.get("has_general_cost_data")),
+                    "coding": bool(record.get("has_coding_cost_data")),
+                    "full": bool(
+                        record.get("has_general_cost_data")
+                        and record.get("has_coding_cost_data")
+                    ),
+                }[args.eligibility]
+                if eligible:
+                    filtered.append(record)
+            records = filtered
+            records.sort(
+                key=lambda item: (item.get("release_date") or "", item["slug"]),
+                reverse=True,
+            )
+            selected_fields = scraper.with_identity_fields(
+                fields or scraper.DEFAULT_CATALOG_FIELDS, ("slug",),
+            )
+            if not args.verbose:
+                records = [scraper.project_record(record, selected_fields) for record in records]
+            entity_type = "model_catalogue"
+            data: dict[str, Any] = {"models": records, "count": len(records)}
+        elif args.coding_agents or args.coding_agent:
+            records = snapshots_for_runs(
+                connection, [runs["coding_agents"]] if runs.get("coding_agents") else [],
+                "coding_agent_configuration",
+            )
+            if args.coding_agent:
+                chosen: list[dict[str, Any]] = []
+                for selector in args.coding_agent:
+                    matches = [
+                        record for record in records
+                        if selector in {record["id"], record.get("display_label")}
+                    ]
+                    if len(matches) != 1:
+                        raise ArchiveError(
+                            f"Cached coding-agent selector {selector!r} matched {len(matches)} records"
+                        )
+                    chosen.append(matches[0])
+                records = chosen
+            records.sort(key=lambda record: record.get("index_score") or -1, reverse=True)
+            selected_fields = scraper.with_identity_fields(
+                fields or scraper.DEFAULT_AGENT_FIELDS, ("id", "host_model_slug"),
+            )
+            if not args.verbose:
+                records = [scraper.project_record(record, selected_fields) for record in records]
+            entity_type = "coding_agent_configuration_collection"
+            data = {"coding_agents": records, "count": len(records)}
+        else:
+            requested = scraper.parse_slugs(args.slugs)
+            records = snapshots_for_runs(connection, runs.get("models") or [], "model")
+            by_slug = {record["slug"]: record for record in records}
+            missing = [slug for slug in requested if slug not in by_slug]
+            if missing:
+                raise ArchiveError(
+                    "Models are not present in the selected frontier collection: "
+                    + ", ".join(missing)
+                )
+            records = [by_slug[slug] for slug in requested]
+            selected_fields = scraper.with_identity_fields(
+                fields or scraper.DEFAULT_MODEL_FIELDS, ("slug",),
+            )
+            if not args.verbose:
+                records = [scraper.project_record(record, selected_fields) for record in records]
+            entity_type = "model_collection"
+            data = {"model": records[0]} if len(records) == 1 else {"models": records}
+            data.update({"requested_count": len(requested), "returned_count": len(records)})
+    data.update({
+        "output_fields": "all" if args.verbose else selected_fields,
+        "cache": {
+            "collection_id": manifest["collection_id"],
+            "collected_from": manifest["started_at"],
+            "collected_to": manifest["finished_at"],
+        },
+    })
+    return {
+        "schema_version": 2,
+        "status": "success",
+        "entity_type": entity_type,
+        "collected_at": manifest["finished_at"],
+        "data": data,
+    }
+
+
 def reset(data_dir: Path, confirmed: bool) -> Path | None:
     if not confirmed:
         raise ArchiveError("Reset requires --yes")
@@ -333,6 +609,7 @@ def build_parser() -> argparse.ArgumentParser:
     collect_parser.add_argument("--models", action="append", default=[], help="Model slugs; comma-separated or repeatable")
     collect_parser.add_argument("--coding-agent", action="append", default=[], help="Limit coding agents by ID or exact label")
     collect_parser.add_argument("--no-catalogue", action="store_true")
+    collect_parser.add_argument("--no-model-details", action="store_true")
     collect_parser.add_argument("--no-coding-agents", action="store_true")
     collect_parser.add_argument("--eligibility", choices=("all", "active", "general", "coding", "full"), default="active")
     collect_parser.add_argument("--include-deprecated", action="store_true")
@@ -345,6 +622,19 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("verify", help="Verify JSON hashes, SQLite integrity, and parity")
     reset_parser = subparsers.add_parser("reset", help="Move the data directory aside and start empty")
     reset_parser.add_argument("--yes", action="store_true", help="Confirm the reset")
+
+    query_parser = subparsers.add_parser("query", help="Query a completed frontier collection locally")
+    query_parser.add_argument("slugs", nargs="*", help="Model slugs separated by spaces and/or commas")
+    query_parser.add_argument("--list-models", action="store_true")
+    query_parser.add_argument("--eligibility", choices=("all", "active", "general", "coding", "full"), default="active")
+    query_parser.add_argument("--include-deprecated", action="store_true")
+    query_parser.add_argument("--since")
+    query_parser.add_argument("--coding-agents", "--list-coding-agents", dest="coding_agents", action="store_true")
+    query_parser.add_argument("--coding-agent", action="append", default=[])
+    query_parser.add_argument("--fields", action="append", help="Dotted fields or named field groups")
+    query_parser.add_argument("--verbose", action="store_true")
+    query_parser.add_argument("--at", help="Use the latest completed collection at or before this UTC timestamp")
+    query_parser.add_argument("--compact", action="store_true")
     return parser
 
 
@@ -353,21 +643,33 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.command == "collect":
-            written = collect(args)
-            result = {"status": "success", "json_records": [str(path) for path in written]}
+            written, manifest = collect(args)
+            result = {
+                "status": "success", "collection_id": manifest["collection_id"],
+                "models": manifest["selected_model_count"],
+                "model_batches": manifest["model_batch_count"],
+                "json_records": [str(path) for path in written],
+            }
         elif args.command == "rebuild":
             runs, snapshots = rebuild(args.data_dir, args.replace)
             result = {"status": "success", "runs": runs, "snapshots": snapshots}
         elif args.command == "verify":
             runs, snapshots = verify(args.data_dir)
             result = {"status": "success", "runs": runs, "snapshots": snapshots}
+        elif args.command == "query":
+            if args.verbose and args.fields:
+                parser.error("query --verbose and --fields are mutually exclusive")
+            modes = int(bool(args.slugs)) + int(args.list_models) + int(bool(args.coding_agents or args.coding_agent))
+            if modes != 1:
+                parser.error("query requires exactly one mode: model slugs, --list-models, or --coding-agents")
+            result = query_cache(args)
         else:
             backup = reset(args.data_dir, args.yes)
             result = {"status": "success", "backup": str(backup) if backup else None}
     except (ArchiveError, scraper.ExtractionError) as exc:
         print(json.dumps({"status": "error", "error": str(exc)}), file=sys.stderr)
         return 1
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=None if getattr(args, "compact", False) else 2, ensure_ascii=False))
     return 0
 
 
