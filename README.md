@@ -4,18 +4,18 @@ Small tools for comparing model capability, task cost, token use, and response-t
 
 ## Model data
 
-`artificial_analysis_v2.py` requires Python 3 and uses only the standard library.
+`artificial_analysis_v2.py` requires Python 3 and uses only the standard library. Run it with `uv run`:
 
 One model:
 
 ```bash
-python artificial_analysis_v2.py gpt-5-6-sol
+uv run artificial_analysis_v2.py gpt-5-6-sol
 ```
 
 Multiple models:
 
 ```bash
-python artificial_analysis_v2.py \
+uv run artificial_analysis_v2.py \
   gpt-5-6-terra-low,gpt-5-6-sol-high,gpt-5-6-sol-xhigh
 ```
 
@@ -36,6 +36,13 @@ The same `collected_at` value is also placed on every model record for future ro
 `EVALUATION_REFERENCE_MODEL` near the top of the script defines the archived evaluation set. It defaults to `gpt-5-6-sol` and can be overridden with `--evaluation-reference-model MODEL_SLUG`. The selected reference model's non-null evaluations define a consistent schema; requested models return `null` where they have no reported result.
 
 Evaluation keys include GDPval-AA, normalized GDPval-AA, tau2, tau-bench Banking, Terminal-Bench Hard, Terminal-Bench v2.1, SciCode, Humanity's Last Exam, GPQA Diamond, CritPt, AA-Omniscience, AA Long Context Reasoning, IFBench, APEX Agents, ITBench SRE, MMMU-Pro, LiveCodeBench, and AIME 2025.
+
+The pre-v2 scripts are retained under `legacy/` for compatibility:
+
+```bash
+uv run legacy/artificial_analysis_single_model.py gpt-5-6-sol
+uv run legacy/artificial_analysis_models.py gpt-5-6-sol,gpt-5-6-terra-low
+```
 
 ### Identity and metadata
 
