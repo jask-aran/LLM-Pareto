@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DeepSWE Efficiency Explorer</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1d212b; --grid:#2a2e38;
+    --text:#e8eaed; --muted:#9aa0ac; --accent:#f5c451; --good:#6ee7b7;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;padding:22px;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;}
+  h1{font-size:18px;font-weight:600;margin:0 0 2px;}
+  p.sub{margin:0 0 16px;color:var(--muted);font-size:13px;}
+  .layout{display:flex;gap:18px;align-items:flex-start;}
+  .main{flex:1 1 auto;min-width:0;}
+  .controls{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-bottom:14px;
+    background:var(--panel);border:1px solid var(--grid);border-radius:10px;padding:12px 14px;}
+  .ctrl{display:flex;flex-direction:column;gap:4px;}
+  .ctrl label{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);}
+  select,button.tg{background:var(--panel2);border:1px solid var(--grid);color:var(--text);
+    font-size:12px;padding:6px 8px;border-radius:6px;cursor:pointer;}
+  button.tg.active{border-color:var(--accent);color:var(--accent);}
+  #blend-weight-wrap{display:none;flex-direction:column;gap:4px;min-width:170px;}
+  #blend-weight-wrap.show{display:flex;}
+  .wlabels{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);}
+  .chart-wrap{background:var(--panel);border:1px solid var(--grid);border-radius:10px;
+    padding:14px;position:relative;}
+  svg{display:block;width:100%;height:auto;}
+  .axis-label{fill:var(--muted);font-size:11px;}
+  .tick-label{fill:var(--muted);font-size:10px;}
+  .gridline{stroke:var(--grid);stroke-width:1;}
+  .model-path{fill:none;stroke-width:2;opacity:.8;}
+  .frontier-path{fill:none;stroke:rgba(255,255,255,.5);stroke-width:2;stroke-dasharray:6 4;}
+  .pt{stroke:#0f1115;stroke-width:1.2;cursor:pointer;}
+  .solver-ring{fill:none;stroke:var(--good);stroke-width:2.5;}
+  #tooltip{position:absolute;pointer-events:none;background:#21252f;border:1px solid var(--grid);
+    border-radius:6px;padding:8px 10px;font-size:11.5px;line-height:1.65;color:var(--text);
+    display:none;z-index:10;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,.4);}
+  #tooltip b{color:var(--accent);}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:12px;padding-top:12px;border-top:1px solid var(--grid);}
+  .legend-item{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;user-select:none;}
+  .legend-item.off{opacity:.3;}
+  .legend-swatch{width:10px;height:10px;border-radius:2px;flex:0 0 auto;}
+  .legend-tools{display:flex;gap:8px;margin-top:8px;}
+  .legend-tools button{background:none;border:none;color:var(--muted);font-size:10.5px;cursor:pointer;text-decoration:underline;padding:0;}
+  .side{width:270px;flex:0 0 270px;display:flex;flex-direction:column;gap:16px;}
+  .card{background:var(--panel);border:1px solid var(--grid);border-radius:10px;padding:14px 16px;}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text);margin:0 0 10px;}
+  .solver-row{display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--muted);}
+  .seg{display:flex;gap:6px;}
+  .seg button{flex:1;background:var(--panel2);border:1px solid var(--grid);color:var(--text);
+    font-size:11px;padding:5px;border-radius:6px;cursor:pointer;}
+  .seg button.active{border-color:var(--accent);color:var(--accent);}
+  input[type=range]{width:100%;accent-color:var(--accent);}
+  #solver-target-val{color:var(--accent);font-weight:600;}
+  #solver-result{background:rgba(110,231,183,.08);border:1px solid rgba(110,231,183,.35);
+    border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.55;color:var(--text);margin-top:4px;}
+  #solver-result .win{color:var(--good);font-weight:600;}
+  .frontier-note{font-size:11.5px;line-height:1.55;color:var(--muted);}
+  .frontier-note b{color:var(--text);}
+  ol#frontier-list{margin:0 0 0 18px;padding:0;font-size:11.5px;color:var(--muted);max-height:230px;overflow:auto;}
+  ol#frontier-list li{margin-bottom:5px;}
+  .footnote{margin-top:14px;color:var(--muted);font-size:11px;line-height:1.5;}
+  .footnote code{color:var(--text);background:#21252f;padding:1px 4px;border-radius:4px;}
+</style>
+</head>
+<body>
+
+<h1>DeepSWE Efficiency Explorer</h1>
+<p class="sub">44 model &times; reasoning-effort configs from Datacurve's live leaderboard. Pick any axes (including a blended cost+time resource index), size bubbles by a third metric, and solve for the most efficient config that clears a capability target.</p>
+
+<div class="layout">
+  <div class="main">
+    <div class="controls">
+      <div class="ctrl">
+        <label>Y axis (capability)</label>
+        <select id="sel-y">
+          <option value="p1" selected>Pass@1</option>
+          <option value="p4">Pass@4 (best-of-4)</option>
+        </select>
+      </div>
+      <div class="ctrl">
+        <label>X axis (resource)</label>
+        <select id="sel-x">
+          <option value="blend" selected>Blended cost+time</option>
+          <option value="cost">Cost / task ($)</option>
+          <option value="dur">Time / task (s)</option>
+          <option value="outTok">Output tokens</option>
+          <option value="inTok">Input tokens</option>
+          <option value="steps">Agent steps</option>
+        </select>
+      </div>
+      <div class="ctrl" id="blend-weight-wrap">
+        <label>Blend weight</label>
+        <input type="range" id="blend-weight" min="0" max="100" value="50" step="5">
+        <div class="wlabels"><span>all time</span><span id="blend-w-val">50/50</span><span>all cost</span></div>
+      </div>
+      <div class="ctrl">
+        <label>Bubble size</label>
+        <select id="sel-size">
+          <option value="none" selected>Uniform</option>
+          <option value="cost">Cost / task</option>
+          <option value="dur">Time / task</option>
+          <option value="outTok">Output tokens</option>
+          <option value="steps">Agent steps</option>
+        </select>
+      </div>
+      <div class="ctrl">
+        <label>X scale</label>
+        <button class="tg" id="btn-log">Log</button>
+      </div>
+      <div class="ctrl">
+        <label>Overlays</label>
+        <div style="display:flex;gap:6px;">
+          <button class="tg active" id="btn-frontier">Frontier</button>
+          <button class="tg active" id="btn-lines">Tier lines</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="chart-wrap" id="chart-wrap">
+      <svg id="chart" viewBox="0 0 900 540" preserveAspectRatio="xMidYMid meet"></svg>
+      <div id="tooltip"></div>
+      <div class="legend" id="legend"></div>
+      <div class="legend-tools">
+        <button id="leg-all">show all</button>
+        <button id="leg-none">hide all</button>
+        <button id="leg-gpt56">only GPT-5.6 family</button>
+      </div>
+    </div>
+
+    <div class="footnote">
+      Source: <code>deepswe.datacurve.ai/artifacts/v1.1/leaderboard-live.json</code>, 2026-07-17, means over 4 runs (113 tasks, mini-swe-agent). <b>Blended cost+time</b> min-max normalizes cost and time across all 44 configs to [0,1] and mixes them by the weight slider, giving a unitless 0&ndash;1 resource index; the frontier then minimizes that against pass rate. Cost is Datacurve's cache-adjusted figure; time is mean duration and is timeout-skewed on slow configs.
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="card">
+      <h2>Efficiency solver</h2>
+      <div class="solver-row">
+        <div>Target <span id="solver-metric-label">pass@1</span> &ge; <span id="solver-target-val">60%</span></div>
+        <input type="range" id="solver-target" min="0" max="90" value="60" step="1">
+        <div>Minimize:</div>
+        <div class="seg">
+          <button data-min="blend" class="active" id="min-blend">Blend</button>
+          <button data-min="cost" id="min-cost">Cost</button>
+          <button data-min="dur" id="min-dur">Time</button>
+        </div>
+        <div id="solver-result"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Pareto frontier</h2>
+      <ol id="frontier-list"></ol>
+      <div class="frontier-note" id="frontier-note" style="margin-top:10px;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const raw = [
+{model:"gpt-5-6-sol",effort:"max",p1:.7266666667,p4:.8584070796,cost:8.386436347,dur:1128.62,outTok:60013.6,inTok:7907652,steps:61.25},
+{model:"gpt-5-6-sol",effort:"xhigh",p1:.7073170732,p4:.8584070796,cost:4.70366386,dur:800.55,outTok:40744.6,inTok:4259318,steps:44.0},
+{model:"claude-fable-5",effort:"xhigh",p1:.6991150442,p4:.8849557522,cost:13.4145215,dur:1411.58,outTok:80352.2,inTok:7329161,steps:68.4},
+{model:"claude-fable-5",effort:"max",p1:.6972477064,p4:.8407079646,cost:21.63470209,dur:2092.01,outTok:118592.8,inTok:12638832,steps:88.4},
+{model:"gpt-5-6-terra",effort:"max",p1:.6962305987,p4:.8849557522,cost:4.945847264,dur:1016.67,outTok:71938.6,inTok:9230561,steps:75.9},
+{model:"gpt-5-6-sol",effort:"high",p1:.6940133038,p4:.8672566372,cost:3.469833111,dur:594.23,outTok:28450.3,inTok:2713572,steps:36.9},
+{model:"claude-fable-5",effort:"high",p1:.6860465116,p4:.8672566372,cost:9.177638215,dur:1062.30,outTok:57287.1,inTok:4833178,steps:58.7},
+{model:"kimi-k3",effort:"max",p1:.6851441242,p4:.8938053097,cost:4.65468213,dur:4541.45,outTok:81499.8,inTok:9695436,steps:97.6},
+{model:"gpt-5-6-luna",effort:"max",p1:.671875,p4:.9026548673,cost:3.02811681,dur:1122.95,outTok:73399.7,inTok:15443718,steps:101.7},
+{model:"gpt-5-5",effort:"xhigh",p1:.6703539823,p4:.8849557522,cost:7.226236675,dur:1806.33,outTok:46294.7,inTok:8372928,steps:82.0},
+{model:"claude-fable-5",effort:"medium",p1:.6536697248,p4:.8318584071,cost:6.088186529,dur:810.90,outTok:40201.4,inTok:2942252,steps:48.4},
+{model:"gpt-5-5",effort:"high",p1:.6438053097,p4:.9026548673,cost:5.100437004,dur:2048.06,outTok:31159.5,inTok:4617782,steps:61.9},
+{model:"gpt-5-6-sol",effort:"medium",p1:.610619469,p4:.8053097345,cost:1.862031808,dur:423.38,outTok:18425.2,inTok:1505794,steps:30.9},
+{model:"gpt-5-6-terra",effort:"xhigh",p1:.6017699115,p4:.8053097345,cost:2.127191726,dur:584.08,outTok:39616.5,inTok:3246355,steps:43.1},
+{model:"claude-fable-5",effort:"low",p1:.5958429561,p4:.814159292,cost:3.757873126,dur:634.71,outTok:25242.8,inTok:1691250,steps:37.8},
+{model:"claude-opus-4-8",effort:"max",p1:.5897435897,p4:.7927927928,cost:13.22258359,dur:3492.74,outTok:135031.7,inTok:17047939,steps:120.0},
+{model:"gpt-5-6-luna",effort:"xhigh",p1:.5685840708,p4:.7876106195,cost:1.535619269,dur:731.68,outTok:44677.9,inTok:7610578,steps:71.1},
+{model:"claude-opus-4-8",effort:"xhigh",p1:.5436241611,p4:.8053097345,cost:8.006355704,dur:2198.77,outTok:86088.8,inTok:9854652,steps:94.6},
+{model:"gpt-5-5",effort:"medium",p1:.5398230088,p4:.7787610619,cost:2.749342735,dur:1288.99,outTok:19625.4,inTok:2438539,steps:46.0},
+{model:"claude-sonnet-5",effort:"max",p1:.5384615385,p4:.7876106195,cost:26.39985895,dur:4803.54,outTok:214117.5,inTok:72415756,steps:268.5},
+{model:"gpt-5-6-terra",effort:"high",p1:.5376106195,p4:.8053097345,cost:1.134376277,dur:364.29,outTok:21517.0,inTok:1557053,steps:33.5},
+{model:"grok-4-5",effort:"high",p1:.5376106195,p4:.7787610619,cost:2.415748173,dur:484.70,outTok:35525.3,inTok:4059183,steps:61.3},
+{model:"muse-spark-1-1",effort:"xhigh",p1:.5331858407,p4:.7964601770,cost:2.361142644,dur:897.51,outTok:74008.4,inTok:12005399,steps:95.8},
+{model:"claude-opus-4-8",effort:"high",p1:.5176991150,p4:.7787610619,cost:4.281940018,dur:1066.90,outTok:50063.5,inTok:4908687,steps:72.5},
+{model:"gpt-5-4",effort:"xhigh",p1:.5176991150,p4:.7787610619,cost:5.652457725,dur:1368.71,outTok:71408.9,inTok:9418921,steps:70.5},
+{model:"claude-sonnet-5",effort:"xhigh",p1:.4966740576,p4:.7522123894,cost:11.89063454,dur:2414.45,outTok:120698.6,inTok:30695628,steps:185.5},
+{model:"claude-opus-4-8",effort:"medium",p1:.4867256637,p4:.7610619469,cost:3.443857103,dur:880.01,outTok:41313.5,inTok:3843603,steps:65.6},
+{model:"claude-sonnet-5",effort:"high",p1:.4823008850,p4:.7964601770,cost:7.425560161,dur:1728.22,outTok:87294.8,inTok:18254491,steps:146.6},
+{model:"gpt-5-6-sol",effort:"low",p1:.4535398230,p4:.7168141593,cost:1.074266465,dur:262.25,outTok:10579.1,inTok:690834,steps:23.4},
+{model:"gpt-5-6-luna",effort:"high",p1:.4424778761,p4:.7522123894,cost:0.77790075,dur:473.84,outTok:25778.3,inTok:3372478,steps:49.0},
+{model:"glm-5-2",effort:"max",p1:.4377777778,p4:.7699115044,cost:3.919907574,dur:2629.21,outTok:78175.3,inTok:12606560,steps:129.1},
+{model:"claude-opus-4-8",effort:"low",p1:.4079822616,p4:.6814159292,cost:2.293369217,dur:651.83,outTok:28922.7,inTok:2417988,steps:54.0},
+{model:"claude-sonnet-5",effort:"medium",p1:.3977777778,p4:.6460176991,cost:4.079036229,dur:1121.27,outTok:56816.8,inTok:9286962,steps:107.6},
+{model:"gemini-3-5-flash",effort:"medium",p1:.3738938053,p4:.6637168142,cost:7.341823986,dur:1591.24,outTok:275777.5,inTok:17106308,steps:85.7},
+{model:"glm-5-2",effort:"high",p1:.3628318584,p4:.6814159292,cost:2.835516473,dur:1794.47,outTok:54245.5,inTok:9070606,steps:121.9},
+{model:"gpt-5-6-terra",effort:"medium",p1:.3511111111,p4:.6017699115,cost:0.583249369,dur:229.60,outTok:11746.6,inTok:725101,steps:25.1},
+{model:"kimi-k2-7-code",effort:"default",p1:.3053097345,p4:.6106194690,cost:2.815536243,dur:2163.80,outTok:59297.2,inTok:13008041,steps:149.1},
+{model:"claude-sonnet-5",effort:"low",p1:.3051224944,p4:.5752212389,cost:2.186555083,dur:734.91,outTok:35595.1,inTok:4534476,steps:76.9},
+{model:"claude-sonnet-4-6",effort:"high",p1:.2993348115,p4:.5663716814,cost:5.522351799,dur:2815.01,outTok:76160.3,inTok:12870628,steps:133.7},
+{model:"gpt-5-5",effort:"low",p1:.2699115044,p4:.4778761062,cost:1.200202544,dur:570.00,outTok:9442.8,inTok:776752,steps:28.1},
+{model:"gpt-5-6-terra",effort:"low",p1:.2405345212,p4:.4424778761,cost:0.427745261,dur:176.53,outTok:8572.3,inTok:480565,steps:21.5},
+{model:"gemini-3-1-pro-preview",effort:"high",p1:.1175166297,p4:.2831858407,cost:9.481518749,dur:2198.69,outTok:196386.1,inTok:6571926,steps:81.4},
+{model:"gpt-5-6-luna",effort:"medium",p1:.1128318584,p4:.2743362832,cost:0.21630979,dur:181.53,outTok:8179.6,inTok:617827,steps:23.7},
+{model:"gpt-5-6-luna",effort:"low",p1:.0154867257,p4:.0442477876,cost:0.072406239,dur:77.15,outTok:3127.8,inTok:150032,steps:12.5}
+];
+
+const effortOrder={low:0,medium:1,high:2,xhigh:3,max:4,default:2};
+const palette={
+  "gpt-5-6-sol":"#f5c451","gpt-5-6-terra":"#f59e42","gpt-5-6-luna":"#f2846b",
+  "claude-fable-5":"#7dd3fc","claude-opus-4-8":"#5eb1e8","claude-sonnet-5":"#3b82c4","claude-sonnet-4-6":"#1e5a8a",
+  "gpt-5-5":"#c4a3f5","gpt-5-4":"#9d6fe0","kimi-k3":"#6ee7b7","kimi-k2-7-code":"#34a373",
+  "grok-4-5":"#e8e8e8","muse-spark-1-1":"#f472b6","glm-5-2":"#fb923c",
+  "gemini-3-5-flash":"#a3e635","gemini-3-1-pro-preview":"#65a30d"
+};
+
+// precompute min-max normalization for cost & time (over ALL rows, stable)
+const costMin=Math.min(...raw.map(r=>r.cost)), costMax=Math.max(...raw.map(r=>r.cost));
+const durMin=Math.min(...raw.map(r=>r.dur)), durMax=Math.max(...raw.map(r=>r.dur));
+raw.forEach(r=>{
+  r.costN=(r.cost-costMin)/(costMax-costMin);
+  r.durN=(r.dur-durMin)/(durMax-durMin);
+});
+let blendW=0.5; // 0 = all time, 1 = all cost
+function blendVal(r){return blendW*r.costN+(1-blendW)*r.durN;}
+function getX(r){return state.x==="blend"?blendVal(r):r[state.x];}
+
+const metricMeta={
+  blend:{label:"Blended cost+time index",fmt:v=>v.toFixed(3),log:false},
+  cost:{label:"Cost / task ($)",fmt:v=>"$"+v.toFixed(2),log:true},
+  dur:{label:"Time / task (s)",fmt:v=>Math.round(v)+"s",log:true},
+  outTok:{label:"Output tokens",fmt:v=>Math.round(v).toLocaleString(),log:true},
+  inTok:{label:"Input tokens",fmt:v=>Math.round(v).toLocaleString(),log:true},
+  steps:{label:"Agent steps",fmt:v=>v.toFixed(0),log:false},
+  p1:{label:"Pass@1 (%)",fmt:v=>(v*100).toFixed(1)+"%",log:false},
+  p4:{label:"Pass@4 (%)",fmt:v=>(v*100).toFixed(1)+"%",log:false}
+};
+function fmtX(v){return state.x==="blend"?v.toFixed(3):metricMeta[state.x].fmt(v);}
+
+const byModel={};
+raw.forEach(r=>{(byModel[r.model]=byModel[r.model]||[]).push(r);});
+Object.values(byModel).forEach(a=>a.sort((x,y)=>effortOrder[x.effort]-effortOrder[y.effort]));
+
+const svgNS="http://www.w3.org/2000/svg";
+const svg=document.getElementById("chart");
+const W=900,H=540,MG={left:64,right:22,top:18,bottom:52};
+const plotW=W-MG.left-MG.right, plotH=H-MG.top-MG.bottom;
+function el(t,a){const e=document.createElementNS(svgNS,t);for(const k in a)e.setAttribute(k,a[k]);return e;}
+
+const state={x:"blend",y:"p1",size:"none",log:false,frontier:true,lines:true,
+  hidden:new Set(),solverTarget:0.60,solverMin:"blend"};
+
+// ---- build persistent DOM once ----
+const gGrid=el("g",{}); svg.appendChild(gGrid);         // gridlines + ticks (rebuilt each render, small)
+const gFrontier=el("path",{class:"frontier-path"}); svg.appendChild(gFrontier);
+const gLines=el("g",{}); svg.appendChild(gLines);
+const linePaths={};
+Object.keys(byModel).forEach(m=>{
+  if(byModel[m].length>1){const p=el("path",{class:"model-path",stroke:palette[m]||"#999"});linePaths[m]=p;gLines.appendChild(p);}
+});
+const gPts=el("g",{}); svg.appendChild(gPts);
+const ptEls=raw.map(r=>{
+  const c=el("circle",{class:"pt",r:5,fill:palette[r.model]||"#999"});
+  c.__row=r;
+  c.addEventListener("mousemove",e=>showTip(e,r));
+  c.addEventListener("mouseleave",hideTip);
+  gPts.appendChild(c);
+  return {r,c};
+});
+const solverRing=el("circle",{class:"solver-ring",r:0,style:"display:none"}); svg.appendChild(solverRing);
+const xAxisLabel=el("text",{class:"axis-label",x:MG.left+plotW/2,y:H-8,"text-anchor":"middle"}); svg.appendChild(xAxisLabel);
+const yAxisLabel=el("text",{class:"axis-label",x:-(MG.top+plotH/2),y:16,"text-anchor":"middle",transform:"rotate(-90)"}); svg.appendChild(yAxisLabel);
+
+const tooltip=document.getElementById("tooltip");
+const chartWrap=document.getElementById("chart-wrap");
+let cachedRect=null;
+function refreshRect(){cachedRect=chartWrap.getBoundingClientRect();}
+window.addEventListener("scroll",refreshRect,{passive:true});
+window.addEventListener("resize",()=>{refreshRect();});
+
+function visibleRows(){return raw.filter(r=>!state.hidden.has(r.model));}
+function extentX(rows){let mn=Infinity,mx=-Infinity;rows.forEach(r=>{const v=getX(r);mn=Math.min(mn,v);mx=Math.max(mx,v);});return[mn,mx];}
+function extent(rows,key){let mn=Infinity,mx=-Infinity;rows.forEach(r=>{mn=Math.min(mn,r[key]);mx=Math.max(mx,r[key]);});return[mn,mx];}
+
+let SX,SY,SZ;
+function buildScales(rows){
+  const [xmn,xmx]=extentX(rows);
+  const useLog=state.log && metricMeta[state.x].log && xmn>0;
+  if(useLog){const lo=Math.log10(xmn*0.85),hi=Math.log10(xmx*1.1);
+    SX={log:true,fn:v=>MG.left+(Math.log10(v)-lo)/(hi-lo)*plotW,mn:xmn,mx:xmx};}
+  else{const pad=(xmx-xmn)*0.06||1;const lo=Math.max(state.x==="blend"?0:0,xmn-pad),hi=xmx+pad;
+    SX={log:false,fn:v=>MG.left+(v-lo)/(hi-lo)*plotW,lo,hi,mn:xmn,mx:xmx};}
+  const [ymn,ymx]=extent(rows,state.y);
+  const ylo=Math.max(0,ymn-0.04),yhi=Math.min(1,ymx+0.04);
+  SY={fn:v=>MG.top+plotH-(v-ylo)/(yhi-ylo)*plotH,lo:ylo,hi:yhi};
+  if(state.size==="none")SZ=()=>5;
+  else{const [smn,smx]=extent(rows,state.size);SZ=v=>{const t=(smx===smn)?.5:(v-smn)/(smx-smn);return 3.5+Math.sqrt(t)*13;};}
+}
+
+function xTickVals(){
+  if(SX.log){
+    const cand=[0.03,0.05,0.1,0.2,0.3,0.5,1,2,3,5,10,20,30,50,100,300,1000,3000,10000,30000,100000,300000,1000000,3000000,10000000];
+    return cand.filter(v=>v>=SX.mn*0.85&&v<=SX.mx*1.1);
+  }
+  const out=[];for(let i=0;i<=5;i++)out.push(SX.lo+(SX.hi-SX.lo)*i/5);return out;
+}
+
+function computeFrontier(rows){
+  const s=[...rows].sort((a,b)=>getX(a)-getX(b));
+  let run=-Infinity;const f=[];
+  s.forEach(r=>{if(r[state.y]>run){f.push(r);run=r[state.y];}});
+  return f;
+}
+function solve(){
+  const rows=visibleRows().filter(r=>r[state.y]>=state.solverTarget);
+  if(rows.length===0)return null;
+  const key=state.solverMin;
+  rows.sort((a,b)=>(key==="blend"?blendVal(a)-blendVal(b):a[key]-b[key]));
+  return rows[0];
+}
+
+function render(){
+  const rows=visibleRows();
+  // hide all points first
+  ptEls.forEach(p=>{p.c.style.display=state.hidden.has(p.r.model)?"none":"";});
+  if(rows.length===0){gFrontier.setAttribute("d","");Object.values(linePaths).forEach(p=>p.setAttribute("d",""));return;}
+  buildScales(rows);
+
+  // grid (rebuild; small node count)
+  while(gGrid.firstChild)gGrid.removeChild(gGrid.firstChild);
+  xTickVals().forEach(v=>{
+    const x=SX.fn(v);if(x<MG.left-1||x>MG.left+plotW+1)return;
+    gGrid.appendChild(el("line",{class:"gridline",x1:x,x2:x,y1:MG.top,y2:MG.top+plotH}));
+    const t=el("text",{class:"tick-label",x:x,y:MG.top+plotH+18,"text-anchor":"middle"});t.textContent=fmtX(v);gGrid.appendChild(t);
+  });
+  for(let i=0;i<=5;i++){const val=SY.lo+(SY.hi-SY.lo)*i/5,y=SY.fn(val);
+    gGrid.appendChild(el("line",{class:"gridline",x1:MG.left,x2:MG.left+plotW,y1:y,y2:y}));
+    const t=el("text",{class:"tick-label",x:MG.left-10,y:y+3,"text-anchor":"end"});t.textContent=(val*100).toFixed(0)+"%";gGrid.appendChild(t);
+  }
+  xAxisLabel.textContent=metricMeta[state.x].label+(SX.log?" (log)":"");
+  yAxisLabel.textContent=metricMeta[state.y].label;
+
+  // frontier
+  if(state.frontier){
+    const f=computeFrontier(rows);
+    gFrontier.setAttribute("d",f.map((p,i)=>(i?"L":"M")+SX.fn(getX(p))+","+SY.fn(p[state.y])).join(" "));
+    gFrontier.style.display="";
+    renderFrontierList(f);
+  }else{gFrontier.style.display="none";}
+
+  // tier lines
+  Object.entries(linePaths).forEach(([m,path])=>{
+    if(!state.lines||state.hidden.has(m)){path.style.display="none";return;}
+    path.style.display="";
+    const pts=byModel[m];
+    path.setAttribute("d",pts.map((p,i)=>(i?"L":"M")+SX.fn(getX(p))+","+SY.fn(p[state.y])).join(" "));
+  });
+
+  // points (update attributes in place)
+  ptEls.forEach(p=>{
+    if(state.hidden.has(p.r.model))return;
+    p.c.setAttribute("cx",SX.fn(getX(p.r)));
+    p.c.setAttribute("cy",SY.fn(p.r[state.y]));
+    p.c.setAttribute("r",SZ(p.r[state.size]||0));
+  });
+
+  // solver ring
+  const win=solve();
+  if(win){solverRing.style.display="";solverRing.setAttribute("cx",SX.fn(getX(win)));
+    solverRing.setAttribute("cy",SY.fn(win[state.y]));solverRing.setAttribute("r",SZ(win[state.size]||0)+5);}
+  else solverRing.style.display="none";
+}
+
+function showTip(e,r){
+  if(!cachedRect)refreshRect();
+  tooltip.style.display="block";
+  tooltip.style.left=(e.clientX-cachedRect.left+14)+"px";
+  tooltip.style.top=(e.clientY-cachedRect.top+10)+"px";
+  tooltip.innerHTML=`<b>${r.model}</b> &middot; ${r.effort}<br>`+
+    `pass@1: ${(r.p1*100).toFixed(1)}% &nbsp; pass@4: ${(r.p4*100).toFixed(1)}%<br>`+
+    `cost: $${r.cost.toFixed(2)} &nbsp; time: ${Math.round(r.dur)}s<br>`+
+    `blend: ${blendVal(r).toFixed(3)} &nbsp; steps: ${r.steps.toFixed(0)}<br>`+
+    `out tok: ${Math.round(r.outTok).toLocaleString()}`;
+}
+function hideTip(){tooltip.style.display="none";}
+
+function renderFrontierList(f){
+  const list=document.getElementById("frontier-list");list.innerHTML="";
+  f.forEach(r=>{const li=document.createElement("li");
+    li.innerHTML=`<b style="color:${palette[r.model]}">${r.model}</b> [${r.effort}] &mdash; ${metricMeta[state.y].fmt(r[state.y])}, ${fmtX(getX(r))}`;
+    list.appendChild(li);});
+  const allGpt56=f.every(r=>r.model.startsWith("gpt-5-6"));
+  document.getElementById("frontier-note").innerHTML= allGpt56
+    ? `<b>All ${f.length} frontier points are GPT-5.6 tiers</b> on this axis pairing.`
+    : `${f.length} frontier points. Non-GPT-5.6 configs appear here that were dominated on the pure-cost view.`;
+}
+
+function renderSolver(){
+  document.getElementById("solver-metric-label").textContent=state.y==="p1"?"pass@1":"pass@4";
+  document.getElementById("solver-target-val").textContent=(state.solverTarget*100).toFixed(0)+"%";
+  const win=solve();const box=document.getElementById("solver-result");
+  if(!win){box.innerHTML=`No visible config reaches ${(state.solverTarget*100).toFixed(0)}%.`;return;}
+  const label={blend:"blend index",cost:"cost",dur:"time"}[state.solverMin];
+  const valStr=state.solverMin==="blend"?blendVal(win).toFixed(3):metricMeta[state.solverMin].fmt(win[state.solverMin]);
+  box.innerHTML=`Most efficient config &ge; ${(state.solverTarget*100).toFixed(0)}% (min ${label}):<br>`+
+    `<span class="win">${win.model} [${win.effort}]</span><br>`+
+    `${state.y==="p1"?"pass@1":"pass@4"}: ${(win[state.y]*100).toFixed(1)}%<br>`+
+    `${label}: <b>${valStr}</b> &nbsp; ($${win.cost.toFixed(2)}, ${Math.round(win.dur)}s)`;
+}
+
+// legend
+const legend=document.getElementById("legend");
+Object.keys(palette).forEach(m=>{
+  if(!byModel[m])return;
+  const item=document.createElement("div");item.className="legend-item";item.dataset.model=m;
+  item.innerHTML=`<span class="legend-swatch" style="background:${palette[m]}"></span>${m}`;
+  item.addEventListener("click",()=>{
+    if(state.hidden.has(m)){state.hidden.delete(m);item.classList.remove("off");}
+    else{state.hidden.add(m);item.classList.add("off");}
+    render();renderSolver();
+  });
+  legend.appendChild(item);
+});
+function syncLegend(){document.querySelectorAll(".legend-item").forEach(it=>it.classList.toggle("off",state.hidden.has(it.dataset.model)));}
+document.getElementById("leg-all").onclick=()=>{state.hidden.clear();syncLegend();render();renderSolver();};
+document.getElementById("leg-none").onclick=()=>{Object.keys(byModel).forEach(m=>state.hidden.add(m));syncLegend();render();renderSolver();};
+document.getElementById("leg-gpt56").onclick=()=>{state.hidden.clear();Object.keys(byModel).forEach(m=>{if(!m.startsWith("gpt-5-6"))state.hidden.add(m);});syncLegend();render();renderSolver();};
+
+// controls
+function syncBlendUI(){
+  document.getElementById("blend-weight-wrap").classList.toggle("show",state.x==="blend");
+  document.getElementById("btn-log").style.opacity = metricMeta[state.x].log?"1":"0.4";
+}
+document.getElementById("sel-y").onchange=e=>{state.y=e.target.value;render();renderSolver();};
+document.getElementById("sel-x").onchange=e=>{
+  state.x=e.target.value;
+  if(!metricMeta[state.x].log)state.log=false;
+  document.getElementById("btn-log").classList.toggle("active",state.log&&metricMeta[state.x].log);
+  syncBlendUI();render();
+};
+document.getElementById("sel-size").onchange=e=>{state.size=e.target.value;render();};
+document.getElementById("btn-log").onclick=e=>{if(!metricMeta[state.x].log)return;state.log=!state.log;e.target.classList.toggle("active",state.log);render();};
+document.getElementById("btn-frontier").onclick=e=>{state.frontier=!state.frontier;e.target.classList.toggle("active");render();};
+document.getElementById("btn-lines").onclick=e=>{state.lines=!state.lines;e.target.classList.toggle("active");render();};
+document.getElementById("blend-weight").oninput=e=>{
+  blendW=(+e.target.value)/100;
+  const c=Math.round(blendW*100),t=100-c;
+  document.getElementById("blend-w-val").textContent=c+"/"+t;
+  render();renderSolver();
+};
+document.getElementById("solver-target").oninput=e=>{state.solverTarget=(+e.target.value)/100;renderSolver();render();};
+function setMin(m){state.solverMin=m;["blend","cost","dur"].forEach(k=>document.getElementById("min-"+k).classList.toggle("active",k===m));renderSolver();render();}
+document.getElementById("min-blend").onclick=()=>setMin("blend");
+document.getElementById("min-cost").onclick=()=>setMin("cost");
+document.getElementById("min-dur").onclick=()=>setMin("dur");
+
+syncBlendUI();refreshRect();render();renderSolver();
+</script>
+</body>
+</html>
