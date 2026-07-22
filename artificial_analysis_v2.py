@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Extract Artificial Analysis task-cost data for one model.
+"""Produce archived comparison data for one or more models.
 
-Uses only the Python standard library. The two public pages embed their chart
-datasets as JSON in the returned HTML, so no browser automation is required.
+Uses only the Python standard library.
 """
 
 from __future__ import annotations
@@ -13,7 +12,9 @@ import json
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any, Iterable
 
@@ -209,6 +210,7 @@ def extract_single_model(
     coding_page: str | None = None,
     evaluation_fields: dict[str, str] | None = None,
     evaluation_reference_model: str = EVALUATION_REFERENCE_MODEL,
+    collected_at: str | None = None,
 ) -> dict[str, Any]:
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
         raise ExtractionError(f"Invalid model slug: {slug!r}")
@@ -253,6 +255,7 @@ def extract_single_model(
     coding_cost = _required(coding_model.get("costPerTask"), "coding costPerTask")
     coding_tokens = coding_model.get("outputTokensPerTask") or {}
     coding_total_cost = coding_model.get("evalCost") or {}
+    intelligence_cost_per_task = (general_model or {}).get("intelligenceIndexCostPerTask") or {}
 
     if general_cost is None or general_tokens is None:
         raise ExtractionError("General cost or token breakdown was not present")
@@ -296,6 +299,7 @@ def extract_single_model(
                 input_tokens = total_input / weighted_task_count
 
     model = {
+        "collected_at": collected_at or datetime.now(timezone.utc).isoformat(),
         "slug": slug,
         "name": _required(name, "name"),
         "short_name": _required(short_name, "short_name"),
@@ -308,6 +312,11 @@ def extract_single_model(
         "output_speed_tokens_per_second": (
             (general_model.get("outputSpeedVariance") or {}).get("median") if general_model else None
         ),
+        "output_speed_variance": general_model.get("outputSpeedVariance") if general_model else None,
+        "performance_by_prompt_type": (
+            general_model.get("performanceByPromptType") if general_model else None
+        ),
+        "performance_timeseries": general_model.get("timescaleData") if general_model else None,
         "end_to_end_response_time": e2e,
         "end_to_end_response_time_breakdown": (
             general_model.get("endToEndResponseTime") if general_model else None
@@ -336,11 +345,35 @@ def extract_single_model(
         "intelligence_index_total_cost_breakdown": (
             general_model.get("intelligenceIndexCost") if general_model else None
         ),
+        "intelligence_evaluation_cost_contributions": (
+            intelligence_cost_per_task.get("evaluations") or []
+        ),
+        "canonical_intelligence_index_token_totals": (
+            general_model.get("canonicalIntelligenceIndexTokenCount") if general_model else None
+        ),
         "intelligence_evaluations": {
             output: general_model.get(source) if general_model else None
             for source, output in evaluation_fields.items()
         },
         "evaluation_reference_model": evaluation_reference_model,
+        "benchmark_details": {
+            "omniscience_breakdown": (
+                general_model.get("omniscienceBreakdown") if general_model else None
+            ),
+            "coding_sub_scores": coding_model.get("subScores"),
+            "coding_weighted_index": coding_model.get("weightedIndex"),
+        },
+        "result_status": {
+            "intelligence_index_is_estimated": (
+                general_model.get("intelligenceIndexIsEstimated") if general_model else None
+            ),
+            "performance_data_source": (
+                general_model.get("performanceDataSource") if general_model else None
+            ),
+            "micro_evaluations_enabled": (
+                general_model.get("microevalsEnabled") if general_model else None
+            ),
+        },
         "coding_index": _required(coding_model.get("headlineValue"), "coding_index"),
         "coding_cost_per_task": _required(coding_cost.get("total"), "coding_cost_per_task"),
         "coding_cost_per_task_breakdown": {
@@ -363,24 +396,158 @@ def extract_single_model(
             "is_reasoning": general_model.get("isReasoning") if general_model else None,
             "is_open_weights": general_model.get("isOpenWeights") if general_model else None,
             "deprecated": general_model.get("deprecated") if general_model else None,
+            "deprecated_to": general_model.get("deprecatedTo") if general_model else None,
+            "knowledge_cutoff_date": (
+                general_model.get("knowledgeCutoffDate") if general_model else None
+            ),
+            "parameters": general_model.get("parameters") if general_model else None,
+            "active_parameters_billions": (
+                general_model.get("inferenceParametersActiveBillions") if general_model else None
+            ),
+            "size_class": general_model.get("sizeClass") if general_model else None,
+            "host_model_count": general_model.get("hostModelCount") if general_model else None,
             "context_window_tokens": general_model.get("contextWindowTokens") if general_model else None,
+            "modalities": {
+                "input": {
+                    "text": general_model.get("inputModalityText") if general_model else None,
+                    "image": general_model.get("inputModalityImage") if general_model else None,
+                    "speech": general_model.get("inputModalitySpeech") if general_model else None,
+                    "video": general_model.get("inputModalityVideo") if general_model else None,
+                },
+                "output": {
+                    "text": general_model.get("outputModalityText") if general_model else None,
+                    "image": general_model.get("outputModalityImage") if general_model else None,
+                    "speech": general_model.get("outputModalitySpeech") if general_model else None,
+                    "video": general_model.get("outputModalityVideo") if general_model else None,
+                },
+            },
+            "license": {
+                "name": general_model.get("licenseName") if general_model else None,
+                "url": general_model.get("licenseUrl") if general_model else None,
+                "commercial_allowed": (
+                    general_model.get("commercialAllowed") if general_model else None
+                ),
+                "open_source_categorization": (
+                    general_model.get("openSourceCategorization") if general_model else None
+                ),
+                "weights_source_url": (
+                    general_model.get("modelWeightsSourceUrl") if general_model else None
+                ),
+            },
             "input_price_per_million_tokens": general_model.get("price1mInputTokens") if general_model else None,
             "output_price_per_million_tokens": general_model.get("price1mOutputTokens") if general_model else None,
             "cache_hit_price_per_million_tokens": general_model.get("cacheHitPrice") if general_model else None,
             "cache_write_price_per_million_tokens": general_model.get("cacheWritePrice") if general_model else None,
+            "cache_hit_discount_percent": (
+                general_model.get("cacheHitDiscountPercent") if general_model else None
+            ),
+            "blended_prices_per_million_tokens": {
+                "0_1_1": general_model.get("price1mBlended0To1To1") if general_model else None,
+                "0_3_1": general_model.get("price1mBlended0To3To1") if general_model else None,
+                "0_100_1": general_model.get("price1mBlended0To100To1") if general_model else None,
+                "7_2_1": general_model.get("price1mBlended7To2To1") if general_model else None,
+                "100_1_1": general_model.get("price1mBlended100To1To1") if general_model else None,
+            },
+            "image_price_per_thousand_1mp_images": (
+                general_model.get("pricePer1k1mpImages") if general_model else None
+            ),
         },
+        "source_record": {"general": general_model, "coding": coding_model},
     }
     return {"status": "success", "data": {"model": model}}
 
 
+def parse_slugs(values: list[str]) -> list[str]:
+    slugs: list[str] = []
+    for value in values:
+        slugs.extend(part.strip() for part in value.split(",") if part.strip())
+    return list(dict.fromkeys(slugs))
+
+
+def extract_models(
+    slugs: list[str],
+    timeout: float = 30.0,
+    evaluation_reference_model: str = EVALUATION_REFERENCE_MODEL,
+) -> dict[str, Any]:
+    if not slugs:
+        raise ExtractionError("At least one model slug is required")
+    for slug in slugs:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
+            raise ExtractionError(f"Invalid model slug: {slug!r}")
+
+    collected_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    encoded_models = urllib.parse.quote(",".join(slugs), safe="")
+    general_url = (
+        f"{BASE}/models/{slugs[0]}"
+        f"?cost=intelligence-vs-cost-per-task&models={encoded_models}"
+    )
+    coding_url = (
+        f"{BASE}/models/capabilities/coding"
+        f"?cost-per-task=index-vs-cost-per-task&models={encoded_models}"
+    )
+    general_page = fetch(general_url, timeout)
+    coding_page = fetch(coding_url, timeout)
+    fields = evaluation_schema(general_page, evaluation_reference_model)
+
+    models: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for slug in slugs:
+        try:
+            response = extract_single_model(
+                slug,
+                timeout,
+                general_page=general_page,
+                coding_page=coding_page,
+                evaluation_fields=fields,
+                evaluation_reference_model=evaluation_reference_model,
+                collected_at=collected_at,
+            )
+            models.append(response["data"]["model"])
+        except ExtractionError as exc:
+            errors.append({"slug": slug, "error": str(exc)})
+
+    if errors:
+        raise ExtractionError(
+            "Incomplete model records: " + json.dumps(errors, ensure_ascii=False)
+        )
+
+    common = {
+        "requested_count": len(slugs),
+        "returned_count": len(models),
+        "evaluation_reference_model": evaluation_reference_model,
+        "evaluation_fields": list(fields.values()),
+        "sources": {"general": general_url, "coding": coding_url},
+    }
+    data: dict[str, Any]
+    if len(models) == 1:
+        data = {"model": models[0], **common}
+    else:
+        data = {"models": models, **common}
+    return {
+        "schema_version": 2,
+        "status": "success",
+        "collected_at": collected_at,
+        "data": data,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("slug", help="Artificial Analysis model slug")
+    parser.add_argument("slugs", nargs="+", help="Model slugs separated by spaces and/or commas")
     parser.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout in seconds")
+    parser.add_argument(
+        "--evaluation-reference-model",
+        default=EVALUATION_REFERENCE_MODEL,
+        help="Model whose reported evaluations define the benchmark field set",
+    )
     parser.add_argument("--compact", action="store_true", help="Emit compact JSON")
     args = parser.parse_args()
     try:
-        result = extract_single_model(args.slug, args.timeout)
+        result = extract_models(
+            parse_slugs(args.slugs),
+            args.timeout,
+            args.evaluation_reference_model,
+        )
     except ExtractionError as exc:
         print(json.dumps({"status": "error", "error": str(exc)}), file=sys.stderr)
         return 1
