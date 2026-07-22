@@ -359,6 +359,11 @@ def project_record(record: dict[str, Any], fields: Iterable[str]) -> dict[str, A
     return result
 
 
+def with_identity_fields(fields: Iterable[str], required: Iterable[str]) -> list[str]:
+    """Return a stable projection that cannot omit the entity identity."""
+    return list(dict.fromkeys((*required, *fields)))
+
+
 def _canonical_model(records: Iterable[dict[str, Any]], slug: str) -> dict[str, Any] | None:
     for record in records:
         if record.get("slug") == slug and "intelligenceIndexCostPerTask" in record:
@@ -702,7 +707,10 @@ def build_model_catalog(
         if eligible:
             catalogue.append(item)
     catalogue.sort(key=lambda item: (item.get("release_date") or "", item["slug"]), reverse=True)
-    selected_fields = fields or list(DEFAULT_CATALOG_FIELDS)
+    selected_fields = with_identity_fields(
+        fields or DEFAULT_CATALOG_FIELDS,
+        ("slug",),
+    )
     if not verbose:
         catalogue = [project_record(item, selected_fields) for item in catalogue]
     return {
@@ -796,7 +804,10 @@ def extract_coding_agents(
         selected = chosen
     selected.sort(key=lambda record: record.get("indexScore") or -1, reverse=True)
     agents = [_normalize_agent(record, collected_at) for record in selected]
-    selected_fields = fields or list(DEFAULT_AGENT_FIELDS)
+    selected_fields = with_identity_fields(
+        fields or DEFAULT_AGENT_FIELDS,
+        ("id", "host_model_slug"),
+    )
     if not verbose:
         agents = [project_record(agent, selected_fields) for agent in agents]
     return {
@@ -862,7 +873,10 @@ def extract_models(
             "Incomplete model records: " + json.dumps(errors, ensure_ascii=False)
         )
 
-    selected_fields = fields or list(DEFAULT_MODEL_FIELDS)
+    selected_fields = with_identity_fields(
+        fields or DEFAULT_MODEL_FIELDS,
+        ("slug",),
+    )
     if not verbose:
         models = [project_record(model, selected_fields) for model in models]
 

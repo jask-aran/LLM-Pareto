@@ -212,6 +212,11 @@ Named model groups are:
 
 Unknown paths fail explicitly. `--fields` and `--verbose` are mutually exclusive.
 
+Entity identity is never removed by a projection. Model details and catalogue
+entries always include `slug`. Coding-agent configurations always include `id`
+and `host_model_slug`, even when they are not named in `--fields`. Response-level
+timestamps, counts, sources and collection metadata also remain present.
+
 ## Flags
 
 | Flag | Use |
@@ -230,24 +235,94 @@ Unknown paths fail explicitly. `--fields` and `--verbose` are mutually exclusive
 | `--timeout SECONDS` | Set the HTTP timeout; defaults to 30 seconds. |
 | `-h`, `--help` | Show CLI help. |
 
-## Planned SQLite archive
+## Local archive
 
-Keep persistence separate from collection. A future `archive.py` should import functions from `artificial_analysis_v2.py`, run a small fixed set of collection jobs, and write append-only snapshots with the standard-library `sqlite3` module. It should not invoke the CLI as a subprocess.
+`archive.py` keeps verbose historical records in two forms:
 
-The collection jobs can remain ordinary Python configuration, for example:
+- one readable JSON file for each collection job;
+- an indexed SQLite database for queries.
 
-- active model catalogue;
-- verbose details for newly eligible or changed model slugs, batched in small groups;
-- verbose Coding Agent Index collection.
+It imports the collector directly and uses only Python's standard library. The
+JSON records are the recovery source of truth. The database can always be rebuilt
+from them. Generated data and reset backups are excluded by `.gitignore`.
 
-The CLI's compact defaults are presentation choices. The archiver should always request verbose records so historical data is not discarded.
+By default, collection archives the active model catalogue and every coding-agent
+configuration:
 
-A minimal database needs only two tables:
+```bash
+uv run archive.py collect
+```
 
-- `collection_runs`: run ID, timestamp, entity type, schema version and job configuration;
-- `snapshots`: run ID, entity type, stable entity ID, release date, canonical JSON payload and payload hash.
+Add detailed model records with comma-separated or repeated `--models` values:
 
-Use model slug as the model entity ID and coding-agent configuration ID as the coding-agent entity ID. Write one transaction per collection run, index snapshots by entity type/ID and collection time, and use a SHA-256 payload hash to detect unchanged records. More normalized tables can be added only when an actual query requires them.
+```bash
+uv run archive.py collect \
+  --models gpt-5-6-sol,gpt-5-6-terra-low \
+  --models gpt-5-6-sol-high
+```
+
+Run only selected jobs:
+
+```bash
+uv run archive.py collect --no-coding-agents
+uv run archive.py collect --no-catalogue --models gpt-5-6-sol
+```
+
+Catalogue filters and model evaluation options match the main collector:
+
+```bash
+uv run archive.py collect --eligibility full --since 2026-07-01
+uv run archive.py collect --include-deprecated
+uv run archive.py collect --models gpt-5-6-sol \
+  --evaluation-reference-model gpt-5-6-sol
+```
+
+All archive jobs request verbose records regardless of the main CLI's default
+projection. The default location is `data/`; change it with the top-level option
+`--data-dir PATH`, placed before the subcommand:
+
+```bash
+uv run archive.py --data-dir /path/to/llm-pareto-data collect
+```
+
+### Integrity and recovery
+
+A collection is written and flushed to JSON before its SQLite transaction. If a
+database write fails, the JSON remains available for recovery. Validate JSON
+hashes, SQLite integrity, and exact run/snapshot parity with:
+
+```bash
+uv run archive.py verify
+```
+
+On a cold start, `collect` creates the directories, schema, and database. To
+create a missing database or reconstruct a damaged one from all JSON records:
+
+```bash
+uv run archive.py rebuild
+uv run archive.py rebuild --replace
+```
+
+`rebuild` constructs a temporary database and only moves it into place after all
+records validate and import successfully. It refuses to overwrite an existing
+database unless `--replace` is given. A malformed JSON file, changed payload
+hash, duplicate run, or unknown archive format stops the rebuild without replacing
+the current database.
+
+Reset is deliberately explicit and recoverable:
+
+```bash
+uv run archive.py reset --yes
+```
+
+It moves `data/` to a timestamped sibling such as `data.reset-20260722T120000Z/`
+and creates a new empty `data/` directory. It does not permanently delete the old
+database or JSON records.
+
+The SQLite schema remains small: `collection_runs` records each job and its JSON
+path, while `snapshots` stores one canonical payload per entity in that run.
+Model slugs and coding-agent configuration IDs are the stable entity identifiers;
+SHA-256 hashes make unchanged payloads and accidental modifications detectable.
 
 ## Efficiency explorer
 
