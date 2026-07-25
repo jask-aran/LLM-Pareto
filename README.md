@@ -315,6 +315,19 @@ uv run archive.py reset --yes
 
 `index.html` is a standalone interactive comparison of capability against cost, duration, token use, and a blended resource index.
 
+### Preview locally
+
+```bash
+cd ~/LLM-Pareto
+python3 -m http.server 8899 --bind 0.0.0.0
+```
+
+Open http://127.0.0.1:8899/ (or http://localhost:8899/).
+
+If the page goes blank / hangs: the server process is wedged. Kill it (`kill %1` or `fg` then Ctrl+C) and restart. Don't debug WSL networking — `--bind 0.0.0.0` is all that's needed.
+
+Don't use `file://` — `fetch('./leaderboard.json')` requires HTTP.
+
 ## DeepSWE leaderboard
 
 `index.html` includes a chart that plots DeepSWE model configs by capability (pass@1 or pass@4) vs. resource axis (cost, time, tokens, or a blended cost+time index), with a Pareto frontier and an efficiency solver.
