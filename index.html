@@ -164,14 +164,42 @@
 
 <script>
 const effortOrder={low:0,medium:1,high:2,xhigh:3,max:4,default:2};
-const palette={
-  "gpt-5-6-sol":"#f5c451","gpt-5-6-terra":"#f59e42","gpt-5-6-luna":"#f2846b",
-  "claude-fable-5":"#7dd3fc","claude-opus-4-8":"#5eb1e8","claude-sonnet-5":"#3b82c4","claude-sonnet-4-6":"#1e5a8a",
-  "gpt-5-5":"#c4a3f5","gpt-5-4":"#9d6fe0","kimi-k3":"#6ee7b7","kimi-k2-7-code":"#34a373",
-  "grok-4-5":"#e8e8e8","muse-spark-1-1":"#f472b6","glm-5-2":"#fb923c",
-  "gemini-3-5-flash":"#a3e635","gemini-3-1-pro-preview":"#65a30d",
-  "claude-opus-5":"#4b8bc9","gemini-3-6-flash":"#8bcf4a"
-};
+// Family-based programmatic colouring
+const families = [
+  { pattern: /^claude/, hue: 28, name: 'Anthropic' },   // orange
+  { pattern: /^gpt/,    hue: 145, name: 'OpenAI' },      // green
+  { pattern: /^gemini/, hue: 215, name: 'Google' },      // blue
+  { pattern: /^kimi/,   hue: 325, name: 'Moonshot' },    // pink
+  { pattern: /^grok/,   hue: 0,   name: 'xAI' },         // red
+  { pattern: /^muse/,   hue: 185, name: 'Meta' },        // cyan
+  { pattern: /^glm/,    hue: 275, name: 'ZhipuAI' },     // purple
+];
+let palette = {};
+function buildPalette(byModel){
+  const colors = {};
+  // Group by family
+  const grouped = {}; const unmatched = [];
+  Object.keys(byModel).forEach(m=>{
+    const bestP1=Math.max(...byModel[m].map(c=>c.p1));
+    let fi=families.findIndex(f=>f.pattern.test(m));
+    if(fi>=0)(grouped[fi]=grouped[fi]||[]).push({model:m,bestP1});
+    else unmatched.push({model:m,bestP1});
+  });
+  // Within each family rank by bestP1 descending, assign lightness steps
+  const steps=[42,52,62,72,82]; // lightness %, higher = paler
+  Object.entries(grouped).forEach(([fi,models]) => {
+    models.sort((a,b)=>b.bestP1-a.bestP1);
+    models.forEach(({model},i)=>{
+      colors[model]=`hsl(${families[fi].hue}, 80%, ${steps[i]||steps[steps.length-1]}%)`;
+    });
+  });
+  // Unmatched models: deterministic hash → hue
+  unmatched.forEach(({model,bestP1})=>{
+    let h=0; for(let i=0;i<model.length;i++)h=model.charCodeAt(i)+((h<<5)-h);
+    colors[model]=`hsl(${Math.abs(h)%360}, 70%, 50%)`;
+  });
+  palette=colors;
+}
 
 let blendW=0.5; // 0 = all time, 1 = all cost
 function blendVal(r){return blendW*r.costN+(1-blendW)*r.durN;}
@@ -360,6 +388,9 @@ async function init(){
   byModel={};
   raw.forEach(r=>{(byModel[r.model]=byModel[r.model]||[]).push(r);});
   Object.values(byModel).forEach(a=>a.sort((x,y)=>effortOrder[x.effort]-effortOrder[y.effort]));
+
+  // Assign family-based colours
+  buildPalette(byModel);
 
   // Build tier-line paths per model
   linePaths={};
