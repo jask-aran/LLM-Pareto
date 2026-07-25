@@ -314,3 +314,41 @@ uv run archive.py reset --yes
 ## Efficiency explorer
 
 `index.html` is a standalone interactive comparison of capability against cost, duration, token use, and a blended resource index.
+
+## DeepSWE leaderboard
+
+`index.html` includes a chart that plots DeepSWE model configs by capability (pass@1 or pass@4) vs. resource axis (cost, time, tokens, or a blended cost+time index), with a Pareto frontier and an efficiency solver.
+
+**Data source.** The chart draws from [`leaderboard.json`](./leaderboard.json), a local snapshot of [DeepSWE Datacurve's live leaderboard](https://deepswe.datacurve.ai/artifacts/v1.1/leaderboard-live.json). The upstream JSON has a different schema; the snapshot is transformed to match what the chart expects.
+
+**Updating manually.** Run the included script from the repo root:
+
+```bash
+./update.sh
+```
+
+This downloads the upstream JSON, transforms it to the chart's schema (50 configs, sorted by model and effort tier), and overwrites `leaderboard.json`. Commit the result:
+
+```bash
+git add leaderboard.json
+git commit -m "update leaderboard data"
+```
+
+**Auto-update.** A GitHub Actions workflow (`.github/workflows/update-leaderboard.yml`) runs daily at 06:00 UTC. It executes `update.sh`, and if `leaderboard.json` changed, commits it with `[skip ci]`. The Pages site redeploys automatically. You can also trigger it manually from the Actions tab.
+
+**Architecture.**
+
+```
+deepswe.datacurve.ai/artifacts/v1.1/leaderboard-live.json
+    │  curl │
+    ▼      │
+update.sh ──┘  (Python transform: rename fields, sort by model+effort)
+    │
+    ▼
+leaderboard.json  ──fetch()──►  index.html
+    ▲
+    │  git commit (manual or GitHub Actions cron)
+    └── repo
+```
+
+The chart uses `fetch('./leaderboard.json')` at page load instead of hardcoded data, so the site works offline and doesn't depend on Datacurve's uptime at runtime.
