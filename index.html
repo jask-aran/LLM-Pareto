@@ -59,7 +59,6 @@
   #solver-target-val{color:var(--accent);font-weight:600;}
   #solver-result{background:rgba(110,231,183,.08);border:1px solid rgba(110,231,183,.35);
     border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.55;color:var(--text);margin-top:4px;}
-  #solver-result .win{color:var(--good);font-weight:600;}
   .frontier-note{font-size:11.5px;line-height:1.55;color:var(--muted);}
   .frontier-note b{color:var(--text);}
   ol#frontier-list{margin:0 0 0 18px;padding:0;font-size:11.5px;color:var(--muted);max-height:230px;overflow:auto;}
@@ -363,7 +362,7 @@ function renderSolver(){
   const label={blend:"blend index",cost:"cost",dur:"time"}[state.solverMin];
   const valStr=state.solverMin==="blend"?blendVal(win).toFixed(3):metricMeta[state.solverMin].fmt(win[state.solverMin]);
   box.innerHTML=`Most efficient config &ge; ${(state.solverTarget*100).toFixed(0)}% (min ${label}):<br>`+
-    `<span class="win">${win.model} [${win.effort}]</span><br>`+
+    `<span style="color:${palette[win.model]}">${win.model} [${win.effort}]</span><br>`+
     `${state.y==="p1"?"pass@1":"pass@4"}: ${(win[state.y]*100).toFixed(1)}%<br>`+
     `${label}: <b>${valStr}</b> &nbsp; ($${win.cost.toFixed(2)}, ${Math.round(win.dur)}s)`;
 }
