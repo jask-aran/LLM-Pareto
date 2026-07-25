@@ -9,14 +9,16 @@
     --text:#e8eaed; --muted:#9aa0ac; --accent:#f5c451; --good:#6ee7b7;
   }
   *{box-sizing:border-box;}
-  body{margin:0;padding:22px;background:var(--bg);color:var(--text);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;}
-  h1{font-size:18px;font-weight:600;margin:0 0 2px;}
-  p.sub{margin:0 0 16px;color:var(--muted);font-size:13px;}
-  .layout{display:flex;gap:18px;align-items:flex-start;}
-  .main{flex:1 1 auto;min-width:0;}
-  .controls{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-bottom:14px;
-    background:var(--panel);border:1px solid var(--grid);border-radius:10px;padding:12px 14px;}
+  html,body{height:100%;margin:0;}
+  body{padding:12px 22px;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    display:flex;flex-direction:column;overflow:hidden;}
+  h1{font-size:18px;font-weight:600;margin:0 0 2px;flex-shrink:0;}
+  p.sub{margin:0 0 12px;color:var(--muted);font-size:13px;flex-shrink:0;}
+  .layout{display:flex;gap:16px;flex:1;min-height:0;align-items:stretch;}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:10px;
+    background:var(--panel);border:1px solid var(--grid);border-radius:10px;padding:10px 12px;flex-shrink:0;}
   .ctrl{display:flex;flex-direction:column;gap:4px;}
   .ctrl label{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);}
   select,button.tg{background:var(--panel2);border:1px solid var(--grid);color:var(--text);
@@ -26,8 +28,8 @@
   #blend-weight-wrap.show{display:flex;}
   .wlabels{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);}
   .chart-wrap{background:var(--panel);border:1px solid var(--grid);border-radius:10px;
-    padding:14px;position:relative;}
-  svg{display:block;width:100%;height:auto;}
+    padding:12px;position:relative;flex:1;min-height:0;display:flex;flex-direction:column;}
+  svg{display:block;width:100%;height:100%;min-height:0;}
   .axis-label{fill:var(--muted);font-size:11px;}
   .tick-label{fill:var(--muted);font-size:10px;}
   .gridline{stroke:var(--grid);stroke-width:1;}
@@ -39,13 +41,13 @@
     border-radius:6px;padding:8px 10px;font-size:11.5px;line-height:1.65;color:var(--text);
     display:none;z-index:10;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,.4);}
   #tooltip b{color:var(--accent);}
-  .legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:12px;padding-top:12px;border-top:1px solid var(--grid);}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;padding-top:10px;border-top:1px solid var(--grid);flex-shrink:0;}
   .legend-item{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;user-select:none;}
   .legend-item.off{opacity:.3;}
   .legend-swatch{width:10px;height:10px;border-radius:2px;flex:0 0 auto;}
-  .legend-tools{display:flex;gap:8px;margin-top:8px;}
+  .legend-tools{display:flex;gap:8px;margin-top:6px;flex-shrink:0;}
   .legend-tools button{background:none;border:none;color:var(--muted);font-size:10.5px;cursor:pointer;text-decoration:underline;padding:0;}
-  .side{width:270px;flex:0 0 270px;display:flex;flex-direction:column;gap:16px;}
+  .side{width:270px;flex:0 0 270px;display:flex;flex-direction:column;gap:16px;overflow-y:auto;min-height:0;}
   .card{background:var(--panel);border:1px solid var(--grid);border-radius:10px;padding:14px 16px;}
   .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text);margin:0 0 10px;}
   .solver-row{display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--muted);}
@@ -62,7 +64,7 @@
   .frontier-note b{color:var(--text);}
   ol#frontier-list{margin:0 0 0 18px;padding:0;font-size:11.5px;color:var(--muted);max-height:230px;overflow:auto;}
   ol#frontier-list li{margin-bottom:5px;}
-  .footnote{margin-top:14px;color:var(--muted);font-size:11px;line-height:1.5;}
+  .footnote{margin-top:10px;color:var(--muted);font-size:11px;line-height:1.5;flex-shrink:0;}
   .footnote code{color:var(--text);background:#21252f;padding:1px 4px;border-radius:4px;}
 </style>
 </head>
