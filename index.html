@@ -184,13 +184,13 @@ function buildPalette(byModel){
     if(fi>=0)(grouped[fi]=grouped[fi]||[]).push({model:m,bestP1});
     else unmatched.push({model:m,bestP1});
   });
-  // Each rank shifts hue +4°, drops sat 7%, raises light 12%
-  const hStep=4, sStep=7, lStep=12;
+  // Each rank shifts hue +4°, drops sat ~10%, raises light 12%
+  const hStep=4, sStep=10, lStep=12;
   Object.entries(grouped).forEach(([fi,models]) => {
     models.sort((a,b)=>b.bestP1-a.bestP1);
     const base=families[fi].hue;
     models.forEach(({model},i)=>{
-      colors[model]=`hsl(${base+i*hStep}, ${85-i*sStep}%, ${38+i*lStep}%)`;
+      colors[model]=`hsl(${base+i*hStep}, ${95-i*sStep}%, ${38+i*lStep}%)`;
     });
   });
   // Unmatched models: deterministic hash → hue
