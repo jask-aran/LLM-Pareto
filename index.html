@@ -177,7 +177,6 @@ const families = [
 let palette = {};
 function buildPalette(byModel){
   const colors = {};
-  // Group by family
   const grouped = {}; const unmatched = [];
   Object.keys(byModel).forEach(m=>{
     const bestP1=Math.max(...byModel[m].map(c=>c.p1));
@@ -185,12 +184,13 @@ function buildPalette(byModel){
     if(fi>=0)(grouped[fi]=grouped[fi]||[]).push({model:m,bestP1});
     else unmatched.push({model:m,bestP1});
   });
-  // Within each family rank by bestP1 descending, assign lightness steps
-  const steps=[42,52,62,72,82]; // lightness %, higher = paler
+  // Each rank shifts hue +4°, drops sat 7%, raises light 12%
+  const hStep=4, sStep=7, lStep=12;
   Object.entries(grouped).forEach(([fi,models]) => {
     models.sort((a,b)=>b.bestP1-a.bestP1);
+    const base=families[fi].hue;
     models.forEach(({model},i)=>{
-      colors[model]=`hsl(${families[fi].hue}, 80%, ${steps[i]||steps[steps.length-1]}%)`;
+      colors[model]=`hsl(${base+i*hStep}, ${85-i*sStep}%, ${38+i*lStep}%)`;
     });
   });
   // Unmatched models: deterministic hash → hue
@@ -288,7 +288,7 @@ function render(){
   if(raw.length===0)return;
   const rows=visibleRows();
   ptEls.forEach(p=>{p.c.style.display=state.hidden.has(p.r.model)?"none":"";});
-  if(rows.length===0){gFrontier.setAttribute("d","");Object.values(linePaths).forEach(p=>p.setAttribute("d",""));return;}
+  if(rows.length===0){gFrontier.setAttribute("d","");Object.values(linePaths).forEach(p=>p.setAttribute("d",""));solverRing.style.display="none";return;}
   buildScales(rows);
 
   while(gGrid.firstChild)gGrid.removeChild(gGrid.firstChild);
