@@ -41,12 +41,23 @@
     border-radius:6px;padding:8px 10px;font-size:11.5px;line-height:1.65;color:var(--text);
     display:none;z-index:10;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,.4);}
   #tooltip b{color:var(--accent);}
-  .legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;padding-top:10px;border-top:1px solid var(--grid);flex-shrink:0;}
-  .legend-item{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;user-select:none;}
-  .legend-item.off{opacity:.3;}
-  .legend-swatch{width:10px;height:10px;border-radius:2px;flex:0 0 auto;}
-  .legend-tools{display:flex;gap:8px;margin-top:6px;flex-shrink:0;}
-  .legend-tools button{background:none;border:none;color:var(--muted);font-size:10.5px;cursor:pointer;text-decoration:underline;padding:0;}
+  .legend{display:flex;flex-direction:column;gap:2px;margin-top:8px;padding-top:8px;border-top:1px solid var(--grid);flex-shrink:0;max-height:220px;overflow-y:auto;}
+  .legend-group{display:flex;flex-direction:column;gap:1px;}
+  .legend-family{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--text);cursor:pointer;padding:3px 4px;border-radius:4px;user-select:none;}
+  .legend-family:hover{background:var(--panel2);}
+  .legend-family .arrow{font-size:8px;color:var(--muted);width:12px;flex-shrink:0;transition:transform .15s;}
+  .legend-family .arrow.collapsed{transform:rotate(-90deg);}
+  .legend-family .count{font-size:9px;color:var(--muted);font-weight:400;margin-left:auto;}
+  .legend-family .fam-swatch{width:8px;height:8px;border-radius:2px;flex:0 0 auto;}
+  .legend-item{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted);cursor:pointer;padding:1px 4px 1px 22px;border-radius:3px;user-select:none;}
+  .legend-item:hover{background:var(--panel2);}
+  .legend-item.off{opacity:.3;text-decoration:line-through;}
+  .legend-swatch{width:8px;height:8px;border-radius:2px;flex:0 0 auto;}
+  .legend-tools{display:flex;gap:8px;padding:3px 4px 0;flex-shrink:0;}
+  .legend-tools button{background:none;border:none;color:var(--muted);font-size:10px;cursor:pointer;text-decoration:underline;padding:0;}
+  #ctx-menu{position:fixed;background:var(--panel2);border:1px solid var(--grid);border-radius:6px;padding:4px 0;font-size:11px;z-index:100;display:none;min-width:130px;box-shadow:0 4px 16px rgba(0,0,0,.5);}
+  #ctx-menu div{padding:5px 14px;cursor:pointer;color:var(--text);}
+  #ctx-menu div:hover{background:var(--panel);}
   .side{width:270px;flex:0 0 270px;display:flex;flex-direction:column;gap:16px;overflow-y:auto;min-height:0;}
   .card{background:var(--panel);border:1px solid var(--grid);border-radius:10px;padding:14px 16px;}
   .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text);margin:0 0 10px;}
@@ -128,6 +139,7 @@
       <button id="leg-all">show all</button>
       <button id="leg-none">hide all</button>
     </div>
+    <div id="ctx-menu"></div>
   </div>
 
   <div class="side">
@@ -274,6 +286,8 @@ async function init(){
     (byModel[k]=byModel[k]||[]).push(d);
   });
   sortedModels=Object.keys(byModel).sort();
+  buildDefaultHidden();
+  initHidden();
   buildPalette();
   syncLegend();
   refresh();
@@ -498,25 +512,127 @@ function moveTooltip(e){
 function hideTooltip(){document.getElementById("tooltip").style.display="none";}
 
 // ---- legend ----
+const famCollapsed={}; // family index → bool
+// family models that are hidden by default
+const defaultHidden=[];
+function buildDefaultHidden(){
+  Object.keys(byModel).forEach(k=>{
+    if(/non-reasoning/.test(k))defaultHidden.push(k);
+  });
+}
+
+// Build family → modelKeys mapping
+function famIndex(mk){
+  for(let i=0;i<families.length;i++){
+    if(families[i].pattern.test(mk))return i;
+  }
+  return -1;
+}
+function byFamilyMap(){
+  const m={};
+  Object.keys(byModel).sort().forEach(k=>{
+    const fi=famIndex(k);
+    if(fi>=0){(m[fi]=m[fi]||[]).push(k);}
+    else{(m[-1]=m[-1]||[]).push(k);}
+  });
+  return m;
+}
+
 function syncLegend(){
   const el=document.getElementById("legend");
+  const bf=byFamilyMap();
   const items=[];
-  Object.keys(byModel).sort().forEach(k=>{
-    const best=byModel[k].reduce((a,b)=>capVal(b)>capVal(a)?b:a);
-    const col=palette[k]||"#888";
-    const off=hidden.has(k)?" off":"";
-    items.push(`<div class="legend-item${off}" data-key="${k}" onclick="toggleFamily('${k}')">
-      <span class="legend-swatch" style="background:${col}"></span>${k}</div>`);
+
+  Object.keys(bf).sort((a,b)=>+(a)-+(b)).forEach(fi=>{
+    const keys=bf[fi];
+    const fam=fi>=0?families[fi]:null;
+    const name=fam?fam.name:"Other";
+    const col=fam?`hsl(${fam.hue},65%,55%)`:"#888";
+    const collapsed=famCollapsed[fi]||false;
+    const visible=keys.filter(k=>!hidden.has(k)).length;
+
+    // family header
+    items.push(`<div class="legend-group">`);
+    items.push(`<div class="legend-family" data-fi="${fi}" onclick="toggleFamilyAll(${fi})" oncontextmenu="famCtx(event,${fi})">
+      <span class="arrow${collapsed?' collapsed':''}">&#9660;</span>
+      <span class="fam-swatch" style="background:${col}"></span>${name}
+      <span class="count">${visible}/${keys.length}</span>
+    </div>`);
+
+    if(!collapsed){
+      keys.forEach(k=>{
+        const col2=palette[k]||"#888";
+        const off=hidden.has(k)?" off":"";
+        items.push(`<div class="legend-item${off}" data-key="${k}" onclick="toggleModel('${k}')"
+          oncontextmenu="modelCtx(event,'${k}')">${k}</div>`);
+      });
+    }
+    items.push(`</div>`);
   });
   el.innerHTML=items.join("");
 }
 
-function toggleFamily(k){
+// click family header → toggle all models in family
+function toggleFamilyAll(fi){
+  const bf=byFamilyMap();
+  const keys=bf[fi];
+  if(!keys)return;
+  const anyHidden=keys.some(k=>hidden.has(k));
+  keys.forEach(k=>{
+    if(anyHidden)hidden.delete(k);else hidden.add(k);
+  });
+  syncLegend();refresh();
+}
+
+// click model → toggle single
+function toggleModel(k){
   if(hidden.has(k))hidden.delete(k);else hidden.add(k);
   syncLegend();refresh();
 }
 
-document.getElementById("leg-all").onclick=()=>{hidden.clear();syncLegend();refresh();};
+// context menu
+function modelCtx(e,k){
+  e.preventDefault();
+  showCtxMenu(e,[
+    {label:"Hide \""+k+"\"",fn:()=>{hidden.add(k);syncLegend();refresh();}},
+    {label:"Show only \""+k+"\"",fn:()=>{hidden.clear();syncLegend();refresh();}},
+    {label:"Cancel",fn:()=>{}},
+  ]);
+}
+function famCtx(e,fi){
+  e.preventDefault();
+  const fam=fi>=0?families[fi]:null;
+  const name=fam?fam.name:"Other";
+  const bf=byFamilyMap();
+  const keys=bf[fi]||[];
+  showCtxMenu(e,[
+    {label:"Hide all "+name,fn:()=>{keys.forEach(k=>hidden.add(k));syncLegend();refresh();}},
+    {label:"Show only "+name,fn:()=>{hidden.clear();keys.forEach(k=>hidden.delete(k));Object.keys(byModel).forEach(mk=>{if(!keys.includes(mk))hidden.add(mk);});syncLegend();refresh();}},
+    {label:"Expand/collapse",fn:()=>{famCollapsed[fi]=!famCollapsed[fi];syncLegend();}},
+    {label:"Cancel",fn:()=>{}},
+  ]);
+}
+
+function showCtxMenu(e,items){
+  const menu=document.getElementById("ctx-menu");
+  menu.innerHTML=items.map((item,i)=>`<div data-idx="${i}">${item.label}</div>`).join("");
+  menu.style.display="block";
+  menu.style.left=Math.min(e.clientX,document.documentElement.clientWidth-menu.offsetWidth)+"px";
+  menu.style.top=Math.min(e.clientY,document.documentElement.clientHeight-menu.offsetHeight)+"px";
+  menu.querySelectorAll("div").forEach(el=>{
+    el.onclick=()=>{const idx=+el.dataset.idx;items[idx].fn();hideCtxMenu();};
+  });
+  // close on click outside
+  setTimeout(()=>document.addEventListener("click",hideCtxMenu,{once:true}),0);
+}
+function hideCtxMenu(){document.getElementById("ctx-menu").style.display="none";}
+
+// initialise default-hidden in init()
+function initHidden(){
+  defaultHidden.forEach(k=>hidden.add(k));
+}
+
+document.getElementById("leg-all").onclick=()=>{hidden.clear();initHidden();syncLegend();refresh();};
 document.getElementById("leg-none").onclick=()=>{Object.keys(byModel).forEach(k=>hidden.add(k));syncLegend();refresh();};
 
 // ---- solver ----
