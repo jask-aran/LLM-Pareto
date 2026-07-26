@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import argcomplete
 import os
 import shutil
 import sqlite3
@@ -635,6 +636,7 @@ def build_parser() -> argparse.ArgumentParser:
     query_parser.add_argument("--verbose", action="store_true")
     query_parser.add_argument("--at", help="Use the latest completed collection at or before this UTC timestamp")
     query_parser.add_argument("--compact", action="store_true")
+    argcomplete.autocomplete(parser)
     return parser
 
 

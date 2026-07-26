@@ -454,7 +454,10 @@ def extract_single_model(
     total_cost = _find(general, "costPerIntelligenceIndexTask")
     if total_cost is None and general_model:
         total_cost = ((general_model.get("intelligenceIndexCostPerTask") or {}).get("cost") or {}).get("total")
-    time_seconds = float(_required(general_time_minutes, "timePerTask")) * 60
+    # AA publishes cost/token data before latency data for some newly listed
+    # models. Preserve the model with a null latency rather than rejecting the
+    # entire collection; the canonical source record remains available below.
+    time_seconds = float(general_time_minutes) * 60 if general_time_minutes is not None else None
 
     e2e = None
     ttft = None
@@ -563,7 +566,7 @@ def extract_single_model(
             "cache_write": _required(coding_cost.get("cacheWrite"), "coding cache write cost"),
             "cache_hit": _required(coding_cost.get("cacheRead"), "coding cache hit cost"),
         },
-        "coding_time_per_task": _required(coding_model.get("timePerTaskSeconds"), "coding_time_per_task"),
+        "coding_time_per_task": coding_model.get("timePerTaskSeconds"),
         "coding_output_tokens_per_task": {
             "total": coding_tokens.get("output"),
             "answer": coding_tokens.get("answer"),

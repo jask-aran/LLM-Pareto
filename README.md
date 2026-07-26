@@ -2,6 +2,22 @@
 
 Tools for comparing model capability, task cost, token use, response time, and coding-agent configurations.
 
+## Visual explorers
+
+Two interactive chart pages — same engine, different datasets:
+
+| Page | URL | Data source | Capability axis |
+|------|-----|-------------|-----------------|
+| **DeepSWE Explorer** | [`index.html`](./index.html) | `leaderboard.json` (DeepSWE Datacurve) | pass@1 / pass@4 |
+| **AA Model Explorer** | [`aa-index.html`](./aa-index.html) | `aa-data.json` (Artificial Analysis archive) | Intelligence Index / Coding Index |
+
+### Data refresh
+
+| Dataset | Script | Auto-update |
+|---------|--------|-------------|
+| `leaderboard.json` | `./update.sh` | GitHub Actions (daily) |
+| `aa-data.json` | `uv run export-aa-data.py` | Manual (run after `archive.py collect`) |
+
 ## Running the CLI with uv
 
 `artificial_analysis_v2.py` uses only the Python standard library. There are no packages to install.
