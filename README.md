@@ -2,21 +2,26 @@
 
 Tools for comparing model capability, task cost, token use, response time, and coding-agent configurations.
 
-## Visual explorers
+## Web explorer
 
-Two interactive chart pages — same engine, different datasets:
-
-| Page | URL | Data source | Capability axis |
-|------|-----|-------------|-----------------|
-| **DeepSWE Explorer** | [`index.html`](./index.html) | `leaderboard.json` (DeepSWE Datacurve) | pass@1 / pass@4 |
-| **AA Model Explorer** | [`aa-index.html`](./aa-index.html) | `aa-data.json` (Artificial Analysis archive) | Intelligence Index / Coding Index |
+[`index.html`](./index.html) is the unified static explorer. Model mode combines
+Artificial Analysis indexes and individual benchmarks with DeepSWE Pass@1/Pass@4.
+Coding-agent mode keeps harness–model configurations as their own entity type.
+Both modes share filtering, family colours, resource axes, the Pareto frontier,
+the efficiency solver, and quick comparison.
 
 ### Data refresh
 
 | Dataset | Script | Auto-update |
 |---------|--------|-------------|
 | `leaderboard.json` | `./update.sh` | GitHub Actions (daily) |
-| `aa-data.json` | `uv run export-aa-data.py` | Manual (run after `archive.py collect`) |
+| `data/` | `uv run archive.py collect` | Manual |
+| `frontier-data.json` | `uv run export-web-data.py` | Manual after collection |
+
+The app only fetches `frontier-data.json`; it makes no runtime request to either
+source. AA benchmark observations retain only benchmark-specific resource data.
+Where no such cost or time is published, the UI switches to a capability ranking
+instead of borrowing a composite index value.
 
 ## Running the CLI with uv
 
@@ -327,11 +332,7 @@ deleting it:
 uv run archive.py reset --yes
 ```
 
-## Efficiency explorer
-
-`index.html` is a standalone interactive comparison of capability against cost, duration, token use, and a blended resource index.
-
-### Preview locally
+## Preview the web app
 
 ```bash
 cd ~/LLM-Pareto
@@ -339,45 +340,15 @@ python3 -m http.server 8899 --bind 0.0.0.0
 ```
 
 Open http://127.0.0.1:8899/ (or http://localhost:8899/).
-
-If the page goes blank / hangs: the server process is wedged. Kill it (`kill %1` or `fg` then Ctrl+C) and restart. Don't debug WSL networking — `--bind 0.0.0.0` is all that's needed.
-
-Don't use `file://` — `fetch('./leaderboard.json')` requires HTTP.
+Do not use `file://`; the browser must fetch `frontier-data.json` over HTTP.
 
 ## DeepSWE leaderboard
 
-`index.html` includes a chart that plots DeepSWE model configs by capability (pass@1 or pass@4) vs. resource axis (cost, time, tokens, or a blended cost+time index), with a Pareto frontier and an efficiency solver.
-
-**Data source.** The chart draws from [`leaderboard.json`](./leaderboard.json), a local snapshot of [DeepSWE Datacurve's live leaderboard](https://deepswe.datacurve.ai/artifacts/v1.1/leaderboard-live.json). The upstream JSON has a different schema; the snapshot is transformed to match what the chart expects.
-
-**Updating manually.** Run the included script from the repo root:
+`leaderboard.json` is a local snapshot of DeepSWE Datacurve. Refresh it with:
 
 ```bash
 ./update.sh
 ```
 
-This downloads the upstream JSON, transforms it to the chart's schema (50 configs, sorted by model and effort tier), and overwrites `leaderboard.json`. Commit the result:
-
-```bash
-git add leaderboard.json
-git commit -m "update leaderboard data"
-```
-
-**Auto-update.** A GitHub Actions workflow (`.github/workflows/update-leaderboard.yml`) runs daily at 06:00 UTC. It executes `update.sh`, and if `leaderboard.json` changed, commits it with `[skip ci]`. The Pages site redeploys automatically. You can also trigger it manually from the Actions tab.
-
-**Architecture.**
-
-```
-deepswe.datacurve.ai/artifacts/v1.1/leaderboard-live.json
-    │  curl │
-    ▼      │
-update.sh ──┘  (Python transform: rename fields, sort by model+effort)
-    │
-    ▼
-leaderboard.json  ──fetch()──►  index.html
-    ▲
-    │  git commit (manual or GitHub Actions cron)
-    └── repo
-```
-
-The chart uses `fetch('./leaderboard.json')` at page load instead of hardcoded data, so the site works offline and doesn't depend on Datacurve's uptime at runtime.
+The daily workflow refreshes this snapshot at 06:00 UTC. Run
+`uv run export-web-data.py` afterwards to fold it into the browser bundle.
