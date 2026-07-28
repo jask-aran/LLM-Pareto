@@ -15,6 +15,7 @@ from typing import Any
 DATA_DIR = Path("data")
 DATABASE_NAME = "archive.sqlite3"
 DEEPSWE_PATH = Path("leaderboard.json")
+FRONTIERCODE_PATH = Path("frontiercode-data.json")
 OUTPUT_PATH = Path("frontier-data.json")
 
 BENCHMARKS = {
@@ -302,6 +303,26 @@ def main() -> None:
             "composite": False,
             "description": "Success rate with up to four DeepSWE attempts.",
         },
+        {
+            "id": "frontiercode-score",
+            "label": "FrontierCode Score",
+            "short_label": "FC Score",
+            "group": "FrontierCode",
+            "entity_type": "model",
+            "format": "percent",
+            "composite": False,
+            "description": "Cognition FrontierCode leaderboard score.",
+        },
+        {
+            "id": "frontiercode-pass-rate",
+            "label": "FrontierCode Pass Rate",
+            "short_label": "FC Pass Rate",
+            "group": "FrontierCode",
+            "entity_type": "model",
+            "format": "percent",
+            "composite": False,
+            "description": "Cognition FrontierCode pass rate (correct@1).",
+        },
     ]
     for _, (metric_id, label, fmt, description) in BENCHMARKS.items():
         metrics.append(
@@ -434,6 +455,55 @@ def main() -> None:
             )
             metric_counts[metric_id] += 1
 
+    if FRONTIERCODE_PATH.exists():
+        fc_data = json.loads(FRONTIERCODE_PATH.read_text(encoding="utf-8"))
+        if fc_data.get("status") == "success":
+            for row in fc_data["data"]["results"]:
+                slug = row["model"].replace(" ", "-").lower()
+                if slug not in entities["model"]:
+                    family = infer_family(row["model"])
+                    entities["model"][slug] = {
+                        "id": slug,
+                        "label": row["model"],
+                        "slug": slug,
+                        "family": family,
+                        "provider": None,
+                        "release_date": None,
+                        "reasoning": None,
+                        "open_weights": None,
+                        "sources": ["FrontierCode"],
+                    }
+                elif "FrontierCode" not in entities["model"][slug]["sources"]:
+                    entities["model"][slug]["sources"].append("FrontierCode")
+                resources = {
+                    "cost": row.get("cost_per_rollout_usd"),
+                    "output_tokens": row.get("output_tokens_per_rollout"),
+                }
+                if row.get("tool_calls_per_rollout") is not None:
+                    resources["tool_calls"] = row["tool_calls_per_rollout"]
+                if row.get("agent_steps_per_rollout") is not None:
+                    resources["steps"] = row["agent_steps_per_rollout"]
+                resources = {key: value for key, value in resources.items() if value is not None}
+                for metric_id, source_key in (
+                    ("frontiercode-score", "score_percent"),
+                    ("frontiercode-pass-rate", "pass_rate_percent"),
+                ):
+                    if row.get(source_key) is None:
+                        continue
+                    observations.append(
+                        observation(
+                            "model",
+                            slug,
+                            metric_id,
+                            row[source_key],
+                            resources,
+                            "FrontierCode",
+                            "matched",
+                            row["reasoning_effort"],
+                        )
+                    )
+                    metric_counts[metric_id] += 1
+
     agent_metrics = [
         (
             "agent-index",
@@ -555,6 +625,20 @@ def main() -> None:
                 .isoformat(timespec="seconds")
                 .replace("+00:00", "Z"),
             },
+            **(
+                {
+                    "frontiercode": {
+                        "label": "FrontierCode",
+                        "updated_at": datetime.fromtimestamp(
+                            FRONTIERCODE_PATH.stat().st_mtime, timezone.utc
+                        )
+                        .isoformat(timespec="seconds")
+                        .replace("+00:00", "Z"),
+                    }
+                }
+                if FRONTIERCODE_PATH.exists()
+                else {}
+            ),
         },
         "metrics": metrics,
         "entities": {
