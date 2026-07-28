@@ -22,6 +22,35 @@ The app only fetches `frontier-data.json`; it makes no runtime request to either
 source. AA benchmark observations retain only benchmark-specific resource data.
 Where no such cost or time is published, the UI switches to a capability ranking
 instead of borrowing a composite index value.
+| FrontierCode leaderboard | `uv run frontier_code.py` | Live on demand |
+
+## FrontierCode scraper
+
+`frontier_code.py` reads Cognition's public FrontierCode JSON feed and emits a
+validated, normalized leaderboard. By default it returns the current 1.1 Main
+results at each model's best-scoring reasoning effort:
+
+```bash
+uv run frontier_code.py
+```
+
+Select another published view or one or more exact model names:
+
+```bash
+uv run frontier_code.py --subset extended
+uv run frontier_code.py --version 1.0
+uv run frontier_code.py --model "GPT-5.6 Sol" --model "Claude Opus 4.8"
+```
+
+Return every published reasoning effort instead of only the best one:
+
+```bash
+uv run frontier_code.py --all-efforts
+```
+
+`--verbose` adds the canonical source record for every result, while `--compact`
+emits unindented JSON. Schema or source mismatches fail explicitly with a JSON
+error on standard error rather than producing a partial leaderboard.
 
 ## Running the CLI with uv
 
@@ -352,3 +381,4 @@ Do not use `file://`; the browser must fetch `frontier-data.json` over HTTP.
 
 The daily workflow refreshes this snapshot at 06:00 UTC. Run
 `uv run export-web-data.py` afterwards to fold it into the browser bundle.
+
