@@ -1,5 +1,11 @@
 # LLM-Pareto
 
+> **This project now lives inside [SubBench](https://github.com/jask-aran/SubBench)**
+> (`LLM-Pareto/` for the scrapers and bundle export, `web/` for the site), where its
+> explorer is part of the combined site at https://subbench.jask-aran.com/frontier/ and
+> /surface/. The Artificial Analysis scraper there is updated for the site's 2026-11
+> changes; this copy's scraper no longer collects model details or coding agents.
+
 Tools for comparing model capability, task cost, token use, response time, and coding-agent configurations.
 
 ## Web explorer
